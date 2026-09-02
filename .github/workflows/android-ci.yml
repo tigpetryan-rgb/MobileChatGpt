@@ -32,8 +32,8 @@ jobs:
         with:
           packages: ''
 
-      - name: Install Android 17 / API 37 platform
-        run: sdkmanager 'platform-tools' 'platforms;android-37'
+      - name: Install Android 17 / API 37 preview platform
+        run: sdkmanager --channel=3 'platform-tools' 'platforms;android-37'
 
       - name: Set up Gradle 9.5.0
         uses: gradle/actions/setup-gradle@v6
