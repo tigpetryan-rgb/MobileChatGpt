@@ -33,27 +33,30 @@ class RuntimeVerticalSliceTest {
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun homeDashboardOpenAppProjectBrainAndSecureDeviceBridge() = runBlocking {
+    fun safeDeviceToolsAndSecureBridgeVerticalSlice() = runBlocking {
         waitForText("Backend ok", substring = true)
         waitForText("Runtime QA Project")
 
         composeRule.onNodeWithText("Runtime QA Project").performClick()
         waitForText("Device tool · open_app")
+        waitForText("Device tool · open_url")
+        waitForText("Device tool · share_text")
         composeRule.onNodeWithText("Device tool · open_app").assertIsDisplayed()
+        composeRule.onNodeWithText("Device tool · open_url").assertIsDisplayed()
+        composeRule.onNodeWithText("Device tool · share_text").assertIsDisplayed()
 
-        // Exercise the actual Dashboard callback with its default known package.
+        // Exercise the existing Dashboard open_app callback with its known package.
         composeRule.onNodeWithText("Open app").performClick()
         waitForFocusedPackage("com.android.settings")
-
-        // Return to MobileChatGpt for deterministic Project Brain and bridge checks.
-        shell("am start -W -n am.mobilechatgpt/.app.MainActivity")
+        returnToApp()
 
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val backend = BackendClient()
         val project = backend.listProjects().first { it.title == "Runtime QA Project" }
-        val executor = DeviceToolExecutor(DeviceToolRegistry(), backend)
+        val registry = DeviceToolRegistry()
+        val executor = DeviceToolExecutor(registry, backend)
 
-        // Invalid names must be rejected before launch and reported as a failed ToolCall.
+        // open_app malformed names remain safely rejected and reported to Project Brain.
         val invalidToolCall = createToolCall(project.id, "bad package name")
         val invalidResult = executor.execute(
             context,
@@ -68,19 +71,30 @@ class RuntimeVerticalSliceTest {
         assertEquals("invalid_payload", invalidResult.code)
         assertEquals("failed", getToolCallStatus(invalidToolCall))
 
-        // A syntactically valid but unavailable package must fail in a controlled way.
-        val missingResult = DeviceToolRegistry().execute(
+        // New tools reject unsafe / hidden behavior locally before any Intent dispatch.
+        val unsafeUrl = registry.execute(
             context,
             DeviceToolCommand(
                 projectId = project.id,
-                toolName = "open_app",
-                payload = mapOf("package_name" to "com.mobilechatgpt.runtimeqa.missing"),
+                toolName = "open_url",
+                payload = mapOf("url" to "javascript:alert(1)"),
             ),
         )
-        assertFalse(missingResult.success)
-        assertTrue(missingResult.code in setOf("app_not_found", "launch_failed", "security_error"))
+        assertFalse(unsafeUrl.success)
+        assertEquals("invalid_payload", unsafeUrl.code)
 
-        // A successful direct tool call must still reach Project Brain's complete endpoint.
+        val hiddenRecipient = registry.execute(
+            context,
+            DeviceToolCommand(
+                projectId = project.id,
+                toolName = "share_text",
+                payload = mapOf("text" to "hello", "recipient" to "forbidden"),
+            ),
+        )
+        assertFalse(hiddenRecipient.success)
+        assertEquals("invalid_payload", hiddenRecipient.code)
+
+        // Existing direct open_app success still completes its ToolCall.
         val successToolCall = createToolCall(project.id, "com.android.settings")
         val successResult = executor.execute(
             context,
@@ -95,8 +109,9 @@ class RuntimeVerticalSliceTest {
         assertEquals("opened", successResult.code)
         assertEquals("completed", getToolCallStatus(successToolCall))
         waitForFocusedPackage("com.android.settings")
+        returnToApp()
 
-        // Secure device bridge: one-time pairing -> Keystore storage -> claim -> open_app -> completion.
+        // Secure device bridge: one-time pairing -> Keystore storage -> command claim/execution.
         val credentialStore = DeviceCredentialStore(context)
         credentialStore.clear()
         val pairingCode = requestJson(
@@ -118,25 +133,60 @@ class RuntimeVerticalSliceTest {
         ).all.values.map { it.toString() }
         assertTrue(storedValues.none { it.contains(registration.deviceToken) })
 
-        val queued = requestJson(
-            "POST",
-            "devices/${registration.deviceId}/commands",
-            JSONObject()
-                .put("project_id", project.id)
-                .put("tool_name", "open_app")
-                .put("payload", JSONObject().put("package_name", "com.android.settings"))
-                .put("idempotency_key", "runtime-emulator-open-settings")
-                .put("external_side_effect", false)
-                .toString(),
-        )
-        assertEquals("queued", queued.getString("status"))
+        val processor = DeviceCommandProcessor(registry, bridgeBackend)
 
-        val bridgeResult = DeviceCommandProcessor(DeviceToolRegistry(), bridgeBackend)
-            .claimAndExecute(context)
-        assertEquals("completed", bridgeResult.status)
-        assertTrue(bridgeResult.toolResult?.success == true)
-        assertEquals("completed", getToolCallStatus(queued.getString("tool_call_id")))
+        val openAppQueued = enqueueDeviceCommand(
+            registration.deviceId,
+            project.id,
+            "open_app",
+            JSONObject().put("package_name", "com.android.settings"),
+            "runtime-emulator-open-settings-v2",
+        )
+        val openAppBridge = processor.claimAndExecute(context)
+        assertEquals("completed", openAppBridge.status)
+        assertEquals("opened", openAppBridge.toolResult?.code)
+        assertEquals("completed", getToolCallStatus(openAppQueued.getString("tool_call_id")))
         waitForFocusedPackage("com.android.settings")
+        returnToApp()
+
+        // open_url is delivered through the same authenticated bridge. A minimal emulator may
+        // have no HTTP handler, which is an expected controlled failure; no network response is required.
+        val openUrlQueued = enqueueDeviceCommand(
+            registration.deviceId,
+            project.id,
+            "open_url",
+            JSONObject().put("url", "https://example.com/runtime-qa"),
+            "runtime-emulator-open-url-v1",
+        )
+        val openUrlBridge = processor.claimAndExecute(context)
+        val openUrlCode = openUrlBridge.toolResult?.code
+        assertTrue(openUrlCode in setOf("url_open_requested", "url_handler_not_found"))
+        if (openUrlBridge.toolResult?.success == true) {
+            assertEquals("completed", openUrlBridge.status)
+            assertEquals("completed", getToolCallStatus(openUrlQueued.getString("tool_call_id")))
+        } else {
+            assertEquals("failed", openUrlBridge.status)
+            assertEquals("failed", getToolCallStatus(openUrlQueued.getString("tool_call_id")))
+        }
+        returnToApp()
+
+        // share_text must only open the Android chooser. It never selects a target or sends.
+        val shareQueued = enqueueDeviceCommand(
+            registration.deviceId,
+            project.id,
+            "share_text",
+            JSONObject()
+                .put("text", "Runtime QA share text")
+                .put("chooser_title", "Runtime QA Share"),
+            "runtime-emulator-share-text-v1",
+        )
+        val shareBridge = processor.claimAndExecute(context)
+        assertEquals("completed", shareBridge.status)
+        assertEquals("share_sheet_opened", shareBridge.toolResult?.code)
+        assertEquals("completed", getToolCallStatus(shareQueued.getString("tool_call_id")))
+        waitForChooserActivity()
+        shell("input keyevent KEYCODE_BACK")
+
         credentialStore.clear()
     }
 
@@ -158,6 +208,25 @@ class RuntimeVerticalSliceTest {
         throw AssertionError("Expected focused/resumed package $packageName")
     }
 
+    private fun waitForChooserActivity() {
+        repeat(40) {
+            val activityState = shell("dumpsys activity activities")
+            val windowState = shell("dumpsys window windows")
+            val state = activityState + windowState
+            if (
+                state.contains("ChooserActivity") ||
+                state.contains("ResolverActivity") ||
+                state.contains("IntentResolver")
+            ) return
+            Thread.sleep(250)
+        }
+        throw AssertionError("Expected Android chooser/resolver activity")
+    }
+
+    private fun returnToApp() {
+        shell("am start -W -n am.mobilechatgpt/.app.MainActivity")
+    }
+
     private fun createToolCall(projectId: String, packageName: String): String {
         val payload = JSONObject()
             .put("project_id", projectId)
@@ -166,6 +235,24 @@ class RuntimeVerticalSliceTest {
             .put("external_side_effect", false)
         return requestJson("POST", "tool-calls", payload.toString()).getString("id")
     }
+
+    private fun enqueueDeviceCommand(
+        deviceId: String,
+        projectId: String,
+        toolName: String,
+        payload: JSONObject,
+        idempotencyKey: String,
+    ): JSONObject = requestJson(
+        "POST",
+        "devices/$deviceId/commands",
+        JSONObject()
+            .put("project_id", projectId)
+            .put("tool_name", toolName)
+            .put("payload", payload)
+            .put("idempotency_key", idempotencyKey)
+            .put("external_side_effect", false)
+            .toString(),
+    )
 
     private fun getToolCallStatus(toolCallId: String): String =
         requestJson("GET", "tool-calls/$toolCallId").getString("status")

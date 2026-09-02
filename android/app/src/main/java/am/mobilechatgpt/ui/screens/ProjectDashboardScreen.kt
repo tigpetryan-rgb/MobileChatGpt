@@ -41,8 +41,13 @@ fun ProjectDashboardScreen(
     lastToolResult: DeviceToolResult?,
     onBack: () -> Unit,
     onOpenApp: (String) -> Unit,
+    onOpenUrl: (String) -> Unit,
+    onShareText: (String, String?) -> Unit,
 ) {
     var packageName by remember { mutableStateOf("com.android.settings") }
+    var url by remember { mutableStateOf("https://example.com/") }
+    var shareText by remember { mutableStateOf("Shared from MobileChatGpt") }
+    var chooserTitle by remember { mutableStateOf("Share text") }
 
     Scaffold(
         topBar = {
@@ -92,14 +97,62 @@ fun ProjectDashboardScreen(
                     )
                     Spacer(Modifier.height(10.dp))
                     Button(onClick = { onOpenApp(packageName) }) { Text("Open app") }
-                    lastToolResult?.let { result ->
-                        Spacer(Modifier.height(10.dp))
-                        Text(
-                            text = "${result.code}: ${result.message}",
-                            color = if (result.success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                        )
-                    }
                 }
+            }
+
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Device tool · open_url", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = url,
+                        onValueChange = { url = it },
+                        label = { Text("HTTP(S) URL") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Button(onClick = { onOpenUrl(url) }) { Text("Open URL") }
+                }
+            }
+
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Device tool · share_text", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = shareText,
+                        onValueChange = { shareText = it },
+                        label = { Text("Text") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = chooserTitle,
+                        onValueChange = { chooserTitle = it },
+                        label = { Text("Chooser title") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Button(
+                        onClick = {
+                            onShareText(shareText, chooserTitle.takeIf { it.isNotBlank() })
+                        },
+                    ) { Text("Open share sheet") }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "This only opens Android's share sheet; MobileChatGpt does not choose a recipient or send.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+
+            lastToolResult?.let { result ->
+                Text(
+                    text = "${result.code}: ${result.message}",
+                    color = if (result.success) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                )
             }
         }
     }

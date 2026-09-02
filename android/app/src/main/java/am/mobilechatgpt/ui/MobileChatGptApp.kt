@@ -60,6 +60,17 @@ fun MobileChatGptApp(appContext: Context) {
         }.onFailure { homeError = it.message }
     }
 
+    suspend fun executeLocalTool(projectId: String, toolName: String, payload: Map<String, String>) {
+        lastToolResult = toolExecutor.execute(
+            appContext,
+            DeviceToolCommand(
+                projectId = projectId,
+                toolName = toolName,
+                payload = payload,
+            ),
+        )
+    }
+
     LaunchedEffect(Unit) { refreshHome() }
 
     when (val current = screen) {
@@ -116,13 +127,31 @@ fun MobileChatGptApp(appContext: Context) {
                 onBack = { screen = Screen.Home },
                 onOpenApp = { packageName ->
                     scope.launch {
-                        lastToolResult = toolExecutor.execute(
-                            appContext,
-                            DeviceToolCommand(
-                                projectId = current.project.id,
-                                toolName = "open_app",
-                                payload = mapOf("package_name" to packageName),
-                            ),
+                        executeLocalTool(
+                            current.project.id,
+                            "open_app",
+                            mapOf("package_name" to packageName),
+                        )
+                    }
+                },
+                onOpenUrl = { url ->
+                    scope.launch {
+                        executeLocalTool(
+                            current.project.id,
+                            "open_url",
+                            mapOf("url" to url),
+                        )
+                    }
+                },
+                onShareText = { text, chooserTitle ->
+                    scope.launch {
+                        executeLocalTool(
+                            current.project.id,
+                            "share_text",
+                            buildMap {
+                                put("text", text)
+                                chooserTitle?.let { put("chooser_title", it) }
+                            },
                         )
                     }
                 },

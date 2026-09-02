@@ -6,7 +6,7 @@ import am.mobilechatgpt.domain.tool.DeviceToolCommand
 import am.mobilechatgpt.domain.tool.DeviceToolResult
 
 class DeviceToolRegistry(
-    tools: List<DeviceTool> = listOf(OpenAppTool()),
+    tools: List<DeviceTool> = listOf(OpenAppTool(), OpenUrlTool(), ShareTextTool()),
 ) {
     private val toolsByName = tools.associateBy { it.name }
 

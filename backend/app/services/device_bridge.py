@@ -4,6 +4,7 @@ import hashlib
 import re
 import secrets
 from datetime import timedelta
+from urllib.parse import urlsplit
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
@@ -15,9 +16,12 @@ from app.services.scheduler import is_expired, utcnow
 from app.services.tool_calls import ToolCallError, complete_tool_call, fail_tool_call, start_tool_call
 
 
-SUPPORTED_DEVICE_TOOLS = {"open_app"}
+SUPPORTED_DEVICE_TOOLS = {"open_app", "open_url", "share_text"}
 MAX_DEVICE_COMMAND_ATTEMPTS = 3
-_PACKAGE_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$")
+MAX_URL_LENGTH = 2048
+MAX_SHARE_TEXT_LENGTH = 10_000
+MAX_CHOOSER_TITLE_LENGTH = 120
+_PACKAGE_NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$")
 
 
 class DeviceBridgeError(ValueError):
@@ -29,9 +33,69 @@ def _hash_secret(value: str) -> str:
 
 
 def _validate_open_app_payload(payload: dict) -> None:
+    if set(payload) != {"package_name"}:
+        raise DeviceBridgeError("open_app accepts only package_name")
     package_name = payload.get("package_name")
     if not isinstance(package_name, str) or not _PACKAGE_NAME.fullmatch(package_name):
         raise DeviceBridgeError("open_app requires a valid package_name")
+
+
+def _validate_open_url_payload(payload: dict) -> None:
+    if set(payload) != {"url"}:
+        raise DeviceBridgeError("open_url accepts only url")
+    url = payload.get("url")
+    if not isinstance(url, str) or not url:
+        raise DeviceBridgeError("open_url requires url")
+    if url != url.strip():
+        raise DeviceBridgeError("open_url requires a normalized url")
+    if len(url) > MAX_URL_LENGTH:
+        raise DeviceBridgeError("open_url url is too long")
+    if any(ch.isspace() or ord(ch) < 0x20 for ch in url) or "\\" in url:
+        raise DeviceBridgeError("open_url url contains invalid characters")
+
+    parsed = urlsplit(url)
+    if parsed.scheme.lower() not in {"http", "https"}:
+        raise DeviceBridgeError("open_url allows only http or https")
+    if not parsed.hostname:
+        raise DeviceBridgeError("open_url requires a host")
+    if parsed.username is not None or parsed.password is not None:
+        raise DeviceBridgeError("open_url credentials are not allowed")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise DeviceBridgeError("open_url port is invalid") from exc
+    if port is not None and not 1 <= port <= 65535:
+        raise DeviceBridgeError("open_url port is invalid")
+
+
+def _validate_share_text_payload(payload: dict) -> None:
+    keys = set(payload)
+    if "text" not in keys or not keys.issubset({"text", "chooser_title"}):
+        raise DeviceBridgeError("share_text accepts only text and chooser_title")
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise DeviceBridgeError("share_text requires non-empty text")
+    if len(text) > MAX_SHARE_TEXT_LENGTH:
+        raise DeviceBridgeError("share_text text is too long")
+    if "chooser_title" in payload:
+        title = payload.get("chooser_title")
+        if not isinstance(title, str) or not title.strip():
+            raise DeviceBridgeError("share_text chooser_title must be non-empty")
+        if len(title) > MAX_CHOOSER_TITLE_LENGTH:
+            raise DeviceBridgeError("share_text chooser_title is too long")
+
+
+def _validate_device_tool_payload(tool_name: str, payload: dict) -> None:
+    if not isinstance(payload, dict):
+        raise DeviceBridgeError("Device tool payload must be an object")
+    if tool_name == "open_app":
+        _validate_open_app_payload(payload)
+    elif tool_name == "open_url":
+        _validate_open_url_payload(payload)
+    elif tool_name == "share_text":
+        _validate_share_text_payload(payload)
+    else:
+        raise DeviceBridgeError(f"Unsupported device tool: {tool_name}")
 
 
 def create_pairing(db: Session, *, ttl_seconds: int = 600) -> tuple[DevicePairing, str]:
@@ -152,9 +216,8 @@ def enqueue_device_command(
     if tool_name not in SUPPORTED_DEVICE_TOOLS:
         raise DeviceBridgeError(f"Unsupported device tool: {tool_name}")
     if external_side_effect:
-        raise DeviceBridgeError("open_app must not be marked as an external side effect")
-    if tool_name == "open_app":
-        _validate_open_app_payload(payload)
+        raise DeviceBridgeError("Safe device tools in this milestone must not be marked as external side effects")
+    _validate_device_tool_payload(tool_name, payload)
 
     try:
         call, replayed = start_tool_call(

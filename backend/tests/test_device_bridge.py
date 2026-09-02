@@ -26,6 +26,19 @@ def _paired_device(client):
     return pairing_code, body["device"]["id"], body["device_token"]
 
 
+def _enqueue(client, device_id: str, project_id: str, *, tool_name: str, payload: dict, key: str):
+    return client.post(
+        f"/devices/{device_id}/commands",
+        json={
+            "project_id": project_id,
+            "tool_name": tool_name,
+            "payload": payload,
+            "idempotency_key": key,
+            "external_side_effect": False,
+        },
+    )
+
+
 def test_pairing_is_single_use_and_token_auth_is_required(client):
     pairing_code, device_id, token = _paired_device(client)
 
@@ -106,29 +119,135 @@ def test_open_app_command_claim_complete_and_idempotent_replay(client):
     assert tool_call.json()["status"] == "completed"
 
 
-def test_invalid_or_unsupported_device_commands_are_rejected(client):
+def test_open_url_and_share_text_are_allowlisted_with_strict_payloads(client):
     project = _project(client)
     _, device_id, _ = _paired_device(client)
 
-    invalid_package = client.post(
-        f"/devices/{device_id}/commands",
-        json={
-            "project_id": project["id"],
-            "tool_name": "open_app",
-            "payload": {"package_name": "bad package name"},
-            "idempotency_key": "bad-package",
-        },
+    open_url = _enqueue(
+        client,
+        device_id,
+        project["id"],
+        tool_name="open_url",
+        payload={"url": "https://example.com/path?q=1"},
+        key="open-url-valid",
     )
-    assert invalid_package.status_code == 409
+    assert open_url.status_code == 200
+    assert open_url.json()["tool_name"] == "open_url"
 
-    unsupported = client.post(
+    share_text = _enqueue(
+        client,
+        device_id,
+        project["id"],
+        tool_name="share_text",
+        payload={"text": "Hello from MobileChatGpt", "chooser_title": "Share text"},
+        key="share-text-valid",
+    )
+    assert share_text.status_code == 200
+    assert share_text.json()["tool_name"] == "share_text"
+
+    invalid_urls = [
+        "javascript:alert(1)",
+        "file:///tmp/a",
+        "content://settings/system",
+        "data:text/plain,hello",
+        "https://user:pass@example.com/",
+        " https://example.com/",
+        "https://exa mple.com/",
+        "https:///missing-host",
+    ]
+    for index, url in enumerate(invalid_urls):
+        rejected = _enqueue(
+            client,
+            device_id,
+            project["id"],
+            tool_name="open_url",
+            payload={"url": url},
+            key=f"open-url-invalid-{index}",
+        )
+        assert rejected.status_code == 409, url
+
+    too_long_url = _enqueue(
+        client,
+        device_id,
+        project["id"],
+        tool_name="open_url",
+        payload={"url": "https://example.com/" + "a" * 2048},
+        key="open-url-too-long",
+    )
+    assert too_long_url.status_code == 409
+
+    open_url_extra = _enqueue(
+        client,
+        device_id,
+        project["id"],
+        tool_name="open_url",
+        payload={"url": "https://example.com/", "target": "browser"},
+        key="open-url-extra",
+    )
+    assert open_url_extra.status_code == 409
+
+    invalid_shares = [
+        ({"text": "   "}, "share-blank"),
+        ({"text": "x" * 10_001}, "share-too-long"),
+        ({"text": "hello", "chooser_title": ""}, "share-blank-title"),
+        ({"text": "hello", "chooser_title": "x" * 121}, "share-title-too-long"),
+        ({"text": "hello", "recipient": "someone"}, "share-recipient-forbidden"),
+    ]
+    for payload, key in invalid_shares:
+        rejected = _enqueue(
+            client,
+            device_id,
+            project["id"],
+            tool_name="share_text",
+            payload=payload,
+            key=key,
+        )
+        assert rejected.status_code == 409, payload
+
+    external = client.post(
         f"/devices/{device_id}/commands",
         json={
             "project_id": project["id"],
             "tool_name": "share_text",
-            "payload": {"text": "not yet"},
-            "idempotency_key": "not-yet",
+            "payload": {"text": "hello"},
+            "idempotency_key": "share-external",
+            "external_side_effect": True,
         },
+    )
+    assert external.status_code == 409
+
+
+def test_invalid_or_unsupported_device_commands_are_rejected(client):
+    project = _project(client)
+    _, device_id, _ = _paired_device(client)
+
+    invalid_package = _enqueue(
+        client,
+        device_id,
+        project["id"],
+        tool_name="open_app",
+        payload={"package_name": "bad package name"},
+        key="bad-package",
+    )
+    assert invalid_package.status_code == 409
+
+    package_extra = _enqueue(
+        client,
+        device_id,
+        project["id"],
+        tool_name="open_app",
+        payload={"package_name": "com.android.settings", "extra": "no"},
+        key="open-app-extra",
+    )
+    assert package_extra.status_code == 409
+
+    unsupported = _enqueue(
+        client,
+        device_id,
+        project["id"],
+        tool_name="send_message",
+        payload={"text": "not allowed"},
+        key="unsupported-tool",
     )
     assert unsupported.status_code == 409
 
@@ -136,14 +255,13 @@ def test_invalid_or_unsupported_device_commands_are_rejected(client):
 def test_stale_claim_requeues_then_exhaustion_fails_tool_call(client):
     project = _project(client)
     _, device_id, token = _paired_device(client)
-    queued = client.post(
-        f"/devices/{device_id}/commands",
-        json={
-            "project_id": project["id"],
-            "tool_name": "open_app",
-            "payload": {"package_name": "com.android.settings"},
-            "idempotency_key": "stale-command",
-        },
+    queued = _enqueue(
+        client,
+        device_id,
+        project["id"],
+        tool_name="open_app",
+        payload={"package_name": "com.android.settings"},
+        key="stale-command",
     ).json()
 
     claimed = client.post(
