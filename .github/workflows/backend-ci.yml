@@ -1,0 +1,64 @@
+name: Backend CI
+
+on:
+  push:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: mobile_chatgpt_ci
+          POSTGRES_USER: mobile_chatgpt
+          POSTGRES_PASSWORD: mobile_chatgpt_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mobile_chatgpt -d mobile_chatgpt_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/pyproject.toml
+
+      - name: Install dependencies
+        working-directory: backend
+        run: uv sync --extra dev
+
+      - name: Run tests
+        working-directory: backend
+        run: uv run pytest -q
+
+      - name: Compile Python
+        working-directory: backend
+        run: uv run python -m compileall -q app
+
+      - name: PostgreSQL migration smoke test
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://mobile_chatgpt:mobile_chatgpt_ci@127.0.0.1:5432/mobile_chatgpt_ci
+        run: uv run alembic upgrade head
