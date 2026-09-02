@@ -2,36 +2,45 @@
 
 Android-first AI operating layer for the phone, deterministic Project Brain, multi-agent orchestration, and a ChatGPT collaboration bridge.
 
-## Repository role
+## START HERE — canonical project instructions
 
-This repository is the **source-of-truth for code**.
+This GitHub repository's `main` branch is the **canonical source of truth for MobileChatGpt development code, plan, governance and handoff state**.
 
-The canonical product plan and execution state remain in Google Drive:
+Before any project work, read in this exact order:
 
-- `00 – START HERE – STRICT EXECUTION RULES`
-- `01 – MobileChatGpt Master Plan – SOURCE OF TRUTH`
-- `02 – CURRENT CHECKPOINT – READ BEFORE WORK`
+1. [`00_STRICT_EXECUTION_RULES.md`](00_STRICT_EXECUTION_RULES.md)
+2. [`01_MASTER_PLAN.md`](01_MASTER_PLAN.md)
+3. [`02_CURRENT_CHECKPOINT.md`](02_CURRENT_CHECKPOINT.md)
 
-Every implementation session must follow the execution rules before changing code. See [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md).
+Repository-based agents must also obey [`AGENTS.md`](AGENTS.md).
+
+Google Drive is retained only as historical/archive reference and is not required to recover the current development plan.
+
+See [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md) for authority rules.
 
 ## Monorepo layout
 
 ```text
 MobileChatGpt/
+├── 00_STRICT_EXECUTION_RULES.md
+├── 01_MASTER_PLAN.md
+├── 02_CURRENT_CHECKPOINT.md
+├── AGENTS.md
 ├── android/                 # Kotlin + Jetpack Compose client
 ├── backend/                 # FastAPI + Project Brain + agents
-├── docs/                    # repository handoff / checkpoint mirrors
+├── docs/                    # governance / supporting repository docs
 └── .github/workflows/       # CI and safety checks
 ```
 
 ## Current implementation checkpoint
 
-- Backend v0.3: implemented and locally verified (`38/38` tests at the source checkpoint).
-- Android v0.1: implementation created; local pure-Kotlin validator `5/5` passed.
-- **Current blocking checkpoint:** Android Gradle build + device verification.
-- GitHub Actions is prepared to run the Android SDK build in CI once this repository exists on GitHub.
+- Backend v0.3: implemented and verified (`38/38` source tests plus successful GitHub Backend CI).
+- GitHub monorepo migration: complete.
+- Secret Pattern Guard: successful.
+- Android v0.1 clean GitHub CI: `testDebugUnitTest` **PASS**, `assembleDebug` **PASS**, debug APK artifact uploaded.
+- **Current next checkpoint:** install/run the APK on an emulator or physical device and complete runtime verification.
 
-See [`docs/CURRENT_CHECKPOINT.md`](docs/CURRENT_CHECKPOINT.md).
+See [`02_CURRENT_CHECKPOINT.md`](02_CURRENT_CHECKPOINT.md).
 
 ## Backend quick start
 
@@ -47,13 +56,14 @@ Production state belongs in PostgreSQL. Do not commit `.env` files or API keys.
 
 ## Android CI verification
 
-The Android workflow installs the Android SDK platform required by the project and runs:
+The Android workflow installs the Android API 37 platform and runs:
 
 ```bash
-gradle --no-daemon -p android testDebugUnitTest assembleDebug
+gradle --no-daemon -p android testDebugUnitTest
+gradle --no-daemon -p android assembleDebug
 ```
 
-Device/emulator verification remains required after CI compile/test passes.
+CI build/test now passes. Emulator/device verification remains the active checkpoint.
 
 ## Security invariants
 

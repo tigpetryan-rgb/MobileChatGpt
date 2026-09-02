@@ -1,31 +1,43 @@
 # MobileChatGpt repository governance
 
-## Mandatory execution order
+## Canonical source of truth
 
-Before project work, read the canonical Drive documents in this order:
+For development of **MobileChatGpt**, the canonical planning/handoff state is the `main` branch of this GitHub repository.
 
-1. `00 – START HERE – STRICT EXECUTION RULES`
-2. `01 – MobileChatGpt Master Plan – SOURCE OF TRUTH`
-3. `02 – CURRENT CHECKPOINT – READ BEFORE WORK`
+Mandatory read order before project work:
+
+1. `00_STRICT_EXECUTION_RULES.md`
+2. `01_MASTER_PLAN.md`
+3. `02_CURRENT_CHECKPOINT.md`
+
+`AGENTS.md` repeats these instructions in agent-friendly form and is mandatory for repository-based work.
 
 ## Authority order
 
 1. The user's latest explicit instruction.
-2. Canonical `00` strict execution rules.
-3. Canonical `01` Master Plan.
-4. Canonical `02` Current Checkpoint.
-5. Implementation specs, build notes, then this repository mirror.
+2. `00_STRICT_EXECUTION_RULES.md`.
+3. `01_MASTER_PLAN.md`.
+4. `02_CURRENT_CHECKPOINT.md`.
+5. Implementation specs, source code, tests and build notes.
+6. Historical/archive references.
 
-## Rules
+## Repository vs runtime state
+
+- This GitHub repository owns MobileChatGpt **development** source code, roadmap governance, CI, checkpoint handoff and durable implementation history.
+- Project Brain/PostgreSQL owns **runtime project state** for projects managed by the MobileChatGpt product.
+- Chat history is not durable authority.
+- Google Drive is retained only as archive/reference unless the user explicitly changes this governance again. Older Drive copies do not override newer GitHub canonical files.
+
+## Execution rules
 
 - Continue from the first incomplete canonical checkpoint.
 - Do not repeat work already marked DONE.
-- Do not change product direction, architecture, phase order, or MVP scope without explicit user approval.
+- Do not change product direction, architecture, phase order, MVP scope or security boundaries without explicit user approval.
 - Better ideas may be recorded as backlog proposals, but may not silently replace the plan.
-- A checkpoint is DONE only after implementation exists, practical validation/tests pass, artifacts/state are stored, and canonical Drive state is updated.
-- Chat history is not the durable source of truth.
+- A checkpoint is DONE only after implementation exists and defined practical validation/tests pass.
+- Update `02_CURRENT_CHECKPOINT.md` in the same development flow whenever the canonical checkpoint changes.
 - High-impact or irreversible actions require the approval policy defined by the project.
 
-## Repository role
+## Main branch rule
 
-GitHub owns code history, review, CI and source control. Google Drive remains the canonical planning/handoff store until the project explicitly changes that rule.
+Canonical planning changes must land on `main` (directly or through a merged PR). A branch/PR draft is not canonical until merged.
