@@ -7,205 +7,191 @@
 
 - Phase 0 — Specification & Foundations: **COMPLETE**
 - Backend deterministic Project Brain: **IMPLEMENTED**
-- Backend v0.3: **COMPLETE / VERIFIED**
+- Backend v0.3 manager/workers/budgets: **COMPLETE / VERIFIED**
 - GitHub monorepo migration: **COMPLETE**
-- Android v0.1 implementation: **CREATED**
-- Android v0.1 clean GitHub Gradle build: **PASS**
-- Android v0.1 emulator runtime verification: **PASS / VERIFIED**
+- Android v0.1 shell/build/runtime: **PASS / VERIFIED**
 - Backend ↔ Android secure device registration + command bridge: **COMPLETE / VERIFIED**
-- `open_url` + `share_text` safe device tools: **CURRENT CHECKPOINT**
+- `open_app`: **COMPLETE / VERIFIED**
+- `open_url` + `share_text` safe device tools: **COMPLETE / VERIFIED**
+- Approval Center / explicit approval UI: **CURRENT CHECKPOINT**
 
 # CANONICAL SOURCE CONTROL STATE
 
 Repository: `tigpetryan-rgb/MobileChatGpt`
 
-Canonical planning/handoff files on `main`:
+Mandatory planning/handoff files on `main`:
 
 1. `00_STRICT_EXECUTION_RULES.md`
 2. `01_MASTER_PLAN.md`
 3. `02_CURRENT_CHECKPOINT.md`
-4. `AGENTS.md` — agent-facing mandatory read/continue instructions
+4. `AGENTS.md`
 
-Google Drive is archive/reference only. It is no longer required for a new repository-based chat/agent to recover the development plan.
+Google Drive is archive/reference only. Repository state is canonical for continuation.
 
-# COMPLETED AND VERIFIED BACKEND
+# VERIFIED FOUNDATIONS
 
-Implemented and validated:
+Backend includes:
 
-- FastAPI + SQLAlchemy + Alembic architecture
+- FastAPI + SQLAlchemy + Alembic
 - deterministic Project Brain state machine
 - dependency resolver
-- worker lease/recovery + bounded retries
-- idempotent tool execution/replay protection
-- approval lifecycle and autonomy guardrails
+- DB-backed worker leases/recovery + bounded retries
+- idempotent ToolCall execution/replay protection
+- exact-payload approval lifecycle and autonomy guardrails
 - project status engine
 - guarded OpenAI Project Manager contract
 - DB-leased Worker Agents
 - token/concurrency budgets
 - stale agent-run reservation recovery
-- Manager agent restricted to validated domain services/tools; no direct DB table writes
-- Backend v0.3 local verification: **38/38 tests PASS**, compile PASS, ZIP integrity PASS
-- GitHub Backend CI clean runner verification: **SUCCESS**, including PostgreSQL/migration checks
+- manager restricted to validated domain services/tools; no direct DB writes
 
-# ANDROID v0.1 — BUILD + RUNTIME VERIFIED
+Android includes:
 
-Implemented:
-
-- Kotlin + Jetpack Compose project skeleton
-- `ui / domain / data-backend / device` package separation
+- Kotlin + Jetpack Compose
+- `ui / domain / data-backend / device` separation
 - Home / Projects screen
-- Project Dashboard shell
-- backend `/health`, `/projects`, `/projects/{id}/status` connectivity
+- Project Dashboard
+- backend `/health`, `/projects`, `/projects/{id}/status`
 - release HTTPS enforcement; debug-only HTTP local development
-- no embedded secrets
-- `DeviceTool` contract + `DeviceToolResult`
-- `open_app` safe tool using official Android launch APIs/intents
-- no AccessibilityService
-- no `QUERY_ALL_PACKAGES` permission
-- `DeviceToolExecutor` result-return path to Project Brain ToolCall complete/fail endpoints
-- local pure Kotlin validator tests: **5/5 PASS**
-- static safety/checkpoint checks: **PASS**
-
-Clean GitHub Android build:
-
-- Run ID: `33614336495`
-- Source commit: `e5649e5f155655a4bf6d0e98a19644b18f1a6a1c`
-- Artifact: `mobile-chatgpt-debug-apk`
-- Artifact ID: `9840387743`
-- Artifact SHA-256: `c8e4a2165b707a837367d769c0a1280a2e1cd7cbdec85a6fd8b34a742d44f879`
-
-Real Android emulator runtime verification:
-
-- Workflow: `Android Emulator Runtime QA`
-- Run ID: `33618580459`
-- Source commit: `69d9d8bbf32ee7f7b859c4e29a407c4aeb58c6c5`
-- Result: **SUCCESS**
-- API 36 x86_64 emulator boot: **PASS**
-- Project Brain backend startup + Alembic seed: **PASS**
-- `connectedDebugAndroidTest`: **PASS**
-- Home → Project Dashboard: **PASS**
-- backend `/health`, project list/status: **PASS**
-- `open_app(com.android.settings)`: **PASS**
-- malformed package rejection: **PASS**
-- missing package controlled failure: **PASS**
-- Project Brain ToolCall complete/fail reporting: **PASS**
-- backend health after emulator test: **PASS**
-- Evidence artifact: `android-runtime-qa-evidence`
-- Evidence artifact ID: `9842116802`
-- Evidence SHA-256: `6c2de67f76ece6e63ac1e7357ec15cadfd6bb5d5adfc181b901ec41fe87805cd`
-
-Release invariant remains required and previously statically/build verified:
-`usesCleartextTraffic=false`; release backend URLs must be HTTPS.
+- no embedded API secrets
+- no AccessibilityService autonomous core
+- no `QUERY_ALL_PACKAGES`
+- safe Android intent-based DeviceTool registry
 
 # SECURE DEVICE BRIDGE — COMPLETE / VERIFIED
 
 Backend source commit:
 
 - `df7e34132046b18c3a72448ab79eace3c0dc91f3`
-- Added Alembic revision `0004_device_bridge`
-- Added durable `device_pairings`, `devices`, `device_commands`
-- Pairing codes are short-lived and single-use; only SHA-256 hashes are stored
-- Device bearer credentials are returned once and only SHA-256 hashes are stored server-side
-- First bridge milestone is allowlisted to `open_app`
-- Commands are linked 1:1 to validated Project Brain `ToolCall` records
-- Idempotency key is mandatory for command enqueue
-- Device-authenticated claim / heartbeat / complete / fail APIs implemented
-- PostgreSQL claim uses row locking / skip-locked semantics
-- stale command leases are requeued with bounded retry; exhausted delivery fails the linked ToolCall
+- Alembic revision `0004_device_bridge`
+- durable `device_pairings`, `devices`, `device_commands`
+- pairing codes short-lived/single-use; hashes only stored
+- device bearer tokens returned once; hashes only stored server-side
+- mandatory command idempotency keys
+- device-authenticated claim / heartbeat / complete / fail
+- PostgreSQL row locking / skip-locked claims
+- stale command lease recovery with bounded retries
+- delivery exhaustion fails linked ToolCall deterministically
 - device revocation invalidates future claims
-
-Backend verification:
-
-- Workflow: `Backend CI`
-- Run ID: `33620137773`
-- Result: **SUCCESS**
-- tests: **PASS**
-- Python compile: **PASS**
-- PostgreSQL Alembic migration smoke test through `0004_device_bridge`: **PASS**
 
 Android bridge source commit:
 
 - `452539c2bfd21b5cc9387aa4954e40bf2dda0797`
-- one-time pairing client implemented
-- device bearer token encrypted at rest with AES-GCM
-- encryption key stored in Android Keystore
-- raw bearer token is not stored in source/APK/plain SharedPreferences
-- bearer-authenticated command claim implemented
-- `DeviceCommandProcessor` executes through the existing safe `DeviceToolRegistry`
-- command result is reported through DeviceCommand complete/fail, which deterministically updates the linked ToolCall
-- Home screen exposes explicit Pair device / Sync command controls
+- one-time pairing client
+- bearer token AES-GCM encrypted at rest
+- encryption key in Android Keystore
+- bearer-authenticated command claim
+- command execution through safe `DeviceToolRegistry`
+- DeviceCommand result deterministically updates linked ToolCall
 
-Android build verification:
+Verification:
 
-- Workflow: `Android CI`
-- Run ID: `33620754007`
-- Result: **SUCCESS**
-- unit tests: **PASS**
-- debug APK assemble: **PASS**
-- Artifact: `mobile-chatgpt-debug-apk`
-- Artifact ID: `9842840727`
-- Artifact SHA-256: `ebcfe14d7cc43e8dd4909248c422b60d9b0ff8acbc05c0849d97086e5d74b6f8`
+- Backend CI `33620137773`: **SUCCESS**
+- Android CI `33620754007`: **SUCCESS**
+- Secret Pattern Guard `33620754093`: **SUCCESS**
+- Android Emulator Runtime QA `33620754011`: **SUCCESS**
+- bridge APK artifact `9842840727`, SHA-256 `ebcfe14d7cc43e8dd4909248c422b60d9b0ff8acbc05c0849d97086e5d74b6f8`
+- bridge runtime evidence `9842936294`, SHA-256 `ec88d99504ea1441833848643da9546b4915a2e2edaf2abacfcf7c1e6b0df770`
 
-Security scan:
+# SAFE INTENT TOOLS — COMPLETE / VERIFIED
 
-- Workflow: `Secret Pattern Guard`
-- Run ID: `33620754093`
-- Result: **SUCCESS**
+Source commit:
 
-Full backend → paired Android emulator → device action → backend completion verification:
+- `2b340f9ee650b89b07caef30c6a452a1cd54b91c`
 
-- Workflow: `Android Emulator Runtime QA`
-- Run ID: `33620754011`
-- Source commit: `452539c2bfd21b5cc9387aa4954e40bf2dda0797`
-- Result: **SUCCESS**
-- backend startup + migration + runtime project seed: **PASS**
-- emulator boot/install/instrumentation: **PASS**
-- one-time device pairing: **PASS**
-- Android Keystore encrypted credential persistence: **PASS**
-- bearer-authenticated device command claim: **PASS**
-- backend-delivered `open_app(com.android.settings)`: **PASS**
-- DeviceCommand completion: **PASS**
-- linked Project Brain ToolCall completion: **PASS**
-- backend health after the run: **PASS**
-- Evidence artifact: `android-runtime-qa-evidence`
-- Evidence artifact ID: `9842936294`
-- Evidence SHA-256: `ec88d99504ea1441833848643da9546b4915a2e2edaf2abacfcf7c1e6b0df770`
+Implemented `open_url`:
+
+- risk class R1 local/reversible
+- Android `ACTION_VIEW` only
+- only `http://` and `https://`
+- strict host/port validation
+- credentials rejected
+- `javascript:`, `file:`, `content:`, `data:` rejected
+- malformed/oversized/whitespace/control-character URLs rejected
+- no browser automation
+- controlled no-handler failure supported
+
+Implemented `share_text`:
+
+- risk class R1 local/reversible
+- Android `ACTION_SEND` + `Intent.createChooser` only
+- bounded non-empty text
+- optional bounded chooser title
+- exact payload keys only: `text`, optional `chooser_title`
+- recipient/hidden action fields rejected
+- **never selects a recipient and never sends automatically**
+
+Bridge/backend constraints:
+
+- exact allowlist is `open_app`, `open_url`, `share_text`
+- all three safe tools must be `external_side_effect=false`
+- idempotency + linked ToolCall semantics preserved
+- hidden extra payload keys rejected server-side and Android-side
+
+Verification:
+
+- Backend CI run `33670054503`: **SUCCESS**
+  - tests PASS
+  - Python compile PASS
+  - PostgreSQL Alembic migration smoke PASS
+- Secret Pattern Guard run `33670054386`: **SUCCESS**
+- Android CI run `33670054571`: **SUCCESS**
+  - unit tests PASS
+  - debug APK assemble PASS
+  - artifact upload PASS
+- APK artifact `9862185153`
+- APK SHA-256 `af62d73d5752f59f32a3c7b137878fc3679bd2dbedd9704cae962d98d550a072`
+- Android Emulator Runtime QA run `33670054546`: **SUCCESS**
+  - backend startup/seed PASS
+  - emulator boot/install/instrumentation PASS
+  - unsafe URL local rejection PASS
+  - hidden share recipient rejection PASS
+  - backend-delivered `open_app` PASS
+  - backend-delivered `open_url` ACTION_VIEW/controlled-handler semantics PASS
+  - backend-delivered `share_text` chooser-only behavior PASS
+  - linked ToolCall state reporting PASS
+  - backend final health PASS
+- runtime evidence artifact `9862322980`
+- runtime evidence SHA-256 `85dd270db7eb17a0711b34a7e7290bd4f5f56672b7e93a586fef6134b35fd34a`
+
+Release invariant remains mandatory:
+`usesCleartextTraffic=false`; release backend URLs must use HTTPS.
 
 # CURRENT NEXT CHECKPOINT — DO NOT SKIP
 
-## `open_url` + `share_text` SAFE DEVICE TOOLS
+## APPROVAL CENTER / EXPLICIT APPROVAL UI
 
-Goal: add the next two Android intent-based phone tools without broadening permissions or bypassing Project Brain / device-bridge validation.
+Goal: expose Project Brain's existing approval guardrail on Android so R2/R3/R4 actions can be reviewed and explicitly approved/rejected without weakening exact-payload, expiry, or single-use semantics.
 
 ## REQUIRED EXECUTION ORDER
 
-1. Add strict pure validators for `open_url` and `share_text`.
-2. `open_url` must accept only normalized `http://` or `https://` URLs; reject `javascript:`, `file:`, `content:`, `data:` and malformed/oversized values.
-3. Implement `open_url` with Android `ACTION_VIEW`; no AccessibilityService and no browser automation.
-4. `share_text` must accept bounded non-empty text and optional bounded chooser title.
-5. Implement `share_text` with `ACTION_SEND` + Android chooser only. It may open the share sheet but must **not** auto-select a recipient or send content.
-6. Register both tools in `DeviceToolRegistry` with explicit risk metadata.
-7. Extend backend device-bridge allowlist/payload validation to exactly `open_app`, `open_url`, `share_text`.
-8. Preserve mandatory idempotency and linked ToolCall semantics for backend-delivered commands.
-9. Add Android unit tests and backend tests for valid/invalid payloads and unsupported schemes/actions.
-10. Extend emulator QA with safe deterministic checks. Do not require an external network response; verify intent dispatch / controlled no-handler behavior and share-sheet launch behavior.
-11. Keep release HTTPS/cleartext and no-secret invariants intact.
-12. Record exact CI/emulator evidence here before moving to approval UI.
+1. Add Android approval domain models and BackendClient methods for listing approvals and explicit approve/reject actions.
+2. Expose pending approval count/navigation from Home and add a dedicated Approval Center screen.
+3. Each approval card must show at minimum: tool name, risk class, human preview, project/task reference when available, expiry and exact payload hash; show reason when available.
+4. Add `payload_hash` and `reason` to the backend approval-list response if not already exposed; never expose secrets beyond the approved human preview/normalized contract.
+5. Approval decisions must require an explicit user tap. Do **not** auto-approve based on viewing, navigation, autonomy level, or device pairing.
+6. Approve/reject must call the existing Project Brain approval lifecycle endpoints and then refresh authoritative backend state.
+7. Preserve expiry and single-use behavior: an expired/consumed approval must not be presented as actionable.
+8. Provide clear pending/approved/rejected/expired/error UI states without executing the underlying side effect as part of the approval tap itself.
+9. Add backend regression coverage for approval-list fields/status filtering if needed and Android unit tests for mapping/state logic.
+10. Extend emulator QA: seed at least two pending approvals, open Approval Center, approve one and reject one via real Compose UI, then verify authoritative backend states.
+11. Keep all existing safe-tool, secure bridge, release HTTPS and no-secret gates green.
+12. Record exact CI/emulator evidence here before moving to the full approved-action vertical slice.
 
 # DO NOT START YET
 
-Until `open_url` + `share_text` pass build/runtime verification, do not begin:
+Until Approval Center passes build/runtime verification, do not begin:
 
-- approval UI
-- direct recipient selection or autonomous message sending
-- contacts/reminders integration
+- automatically executing an R2/R3/R4 action immediately after approval UI work
+- direct recipient selection or autonomous messaging
+- contacts/reminders expansion
 - generic Accessibility-based autonomous UI control
 - payments
 - unrelated ChatGPT/MCP bridge expansion
 
 # NEXT ONLY AFTER THIS CHECKPOINT PASSES
 
-`approval UI → full vertical slice → ChatGPT/MCP bridge → automation/reliability/security → Beta`
+`approved-action full vertical slice → ChatGPT/MCP bridge → automation/reliability/security → Beta`
 
 # RULE
 
