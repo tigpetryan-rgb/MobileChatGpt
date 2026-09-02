@@ -1,0 +1,129 @@
+name: Android Emulator Runtime QA
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "android/**"
+      - "backend/**"
+      - ".github/workflows/android-emulator-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-vertical-slice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: sqlite:////tmp/mobile_chatgpt_runtime_qa.db
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.0.1
+
+      - name: Start Project Brain backend
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd backend
+          uv sync --extra dev
+          rm -f /tmp/mobile_chatgpt_runtime_qa.db
+          uv run alembic upgrade head
+          nohup uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 > /tmp/mobile-chatgpt-backend.log 2>&1 &
+          echo $! > /tmp/mobile-chatgpt-backend.pid
+          for attempt in $(seq 1 40); do
+            if curl --fail --silent http://127.0.0.1:8000/health >/dev/null; then
+              exit 0
+            fi
+            sleep 0.5
+          done
+          cat /tmp/mobile-chatgpt-backend.log
+          exit 1
+
+      - name: Seed runtime QA project
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl --fail --silent --show-error \
+            -H 'Content-Type: application/json' \
+            -d '{"title":"Runtime QA Project","goal":"Verify Android v0.1 runtime vertical slice","autonomy_level":2}' \
+            http://127.0.0.1:8000/projects > /tmp/runtime-project.json
+          cat /tmp/runtime-project.json
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: 14742923
+          accept-android-sdk-licenses: true
+
+      - name: Install compile SDK and platform tools
+        shell: bash
+        run: sdkmanager 'platform-tools' 'platforms;android-37.0'
+
+      - name: Set up Gradle 9.5.0
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: "9.5.0"
+
+      - name: Enable KVM permissions
+        shell: bash
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run emulator vertical slice
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 36
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            set -euxo pipefail
+            mkdir -p runtime-evidence
+            capture_evidence() {
+              adb logcat -d > runtime-evidence/logcat.txt || true
+              adb exec-out screencap -p > runtime-evidence/final-screen.png || true
+              adb shell uiautomator dump /sdcard/runtime-window.xml || true
+              adb pull /sdcard/runtime-window.xml runtime-evidence/window.xml || true
+              adb shell dumpsys activity activities > runtime-evidence/activities.txt || true
+              adb shell dumpsys window windows > runtime-evidence/windows.txt || true
+              cp /tmp/mobile-chatgpt-backend.log runtime-evidence/backend.log || true
+            }
+            trap capture_evidence EXIT
+            adb logcat -c
+            gradle --no-daemon -p android \
+              -PMOBILE_CHATGPT_BACKEND_URL=http://10.0.2.2:8000/ \
+              connectedDebugAndroidTest
+
+      - name: Upload runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-runtime-qa-evidence
+          path: runtime-evidence/
+          if-no-files-found: warn
+
+      - name: Backend still healthy
+        if: always()
+        shell: bash
+        run: |
+          curl --fail --silent --show-error http://127.0.0.1:8000/health
+          echo
