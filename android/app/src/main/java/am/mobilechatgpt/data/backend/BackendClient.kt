@@ -67,6 +67,78 @@ class BackendClient(
         )
     }
 
+    suspend fun registerDevice(pairingCode: String, name: String): DeviceRegistration =
+        withContext(Dispatchers.IO) {
+            val json = requestJson(
+                method = "POST",
+                path = "devices/register",
+                body = JSONObject()
+                    .put("pairing_code", pairingCode)
+                    .put("name", name)
+                    .put("platform", "android")
+                    .toString(),
+            )
+            val device = json.getJSONObject("device")
+            DeviceRegistration(
+                deviceId = device.getString("id"),
+                name = device.getString("name"),
+                platform = device.getString("platform"),
+                deviceToken = json.getString("device_token"),
+            )
+        }
+
+    suspend fun claimDeviceCommand(leaseSeconds: Int = 120): DeviceCommandEnvelope? =
+        withContext(Dispatchers.IO) {
+            val wrapper = requestJson(
+                method = "POST",
+                path = "device-commands/claim",
+                body = JSONObject().put("lease_seconds", leaseSeconds).toString(),
+            )
+            if (wrapper.isNull("command")) return@withContext null
+            val command = wrapper.getJSONObject("command")
+            val payloadJson = command.getJSONObject("payload")
+            val payload = buildMap {
+                for (key in payloadJson.keys()) {
+                    put(key, payloadJson.get(key).toString())
+                }
+            }
+            DeviceCommandEnvelope(
+                id = command.getString("id"),
+                projectId = command.getString("project_id"),
+                toolCallId = command.getString("tool_call_id"),
+                toolName = command.getString("tool_name"),
+                payload = payload,
+                attemptCount = command.getInt("attempt_count"),
+            )
+        }
+
+    suspend fun heartbeatDeviceCommand(commandId: String, leaseSeconds: Int = 120) =
+        withContext(Dispatchers.IO) {
+            requestJson(
+                method = "POST",
+                path = "device-commands/${encodePath(commandId)}/heartbeat",
+                body = JSONObject().put("lease_seconds", leaseSeconds).toString(),
+            )
+        }
+
+    suspend fun completeDeviceCommand(commandId: String, result: Map<String, Any>) =
+        withContext(Dispatchers.IO) {
+            requestJson(
+                method = "POST",
+                path = "device-commands/${encodePath(commandId)}/complete",
+                body = JSONObject().put("result", JSONObject(result)).toString(),
+            )
+        }
+
+    suspend fun failDeviceCommand(commandId: String, error: String) =
+        withContext(Dispatchers.IO) {
+            requestJson(
+                method = "POST",
+                path = "device-commands/${encodePath(commandId)}/fail",
+                body = JSONObject().put("error", error).toString(),
+            )
+        }
+
     suspend fun completeToolCall(toolCallId: String, result: Map<String, Any>) = withContext(Dispatchers.IO) {
         requestJson(
             method = "POST",
@@ -148,6 +220,22 @@ class BackendClient(
             java.net.URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
     }
 }
+
+data class DeviceRegistration(
+    val deviceId: String,
+    val name: String,
+    val platform: String,
+    val deviceToken: String,
+)
+
+data class DeviceCommandEnvelope(
+    val id: String,
+    val projectId: String,
+    val toolCallId: String,
+    val toolName: String,
+    val payload: Map<String, String>,
+    val attemptCount: Int,
+)
 
 fun interface AuthTokenProvider {
     fun token(): String?

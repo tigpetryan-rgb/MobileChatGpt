@@ -10,6 +10,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import am.mobilechatgpt.app.MainActivity
 import am.mobilechatgpt.data.backend.BackendClient
+import am.mobilechatgpt.data.backend.DeviceCredentialStore
+import am.mobilechatgpt.device.DeviceCommandProcessor
 import am.mobilechatgpt.device.DeviceToolExecutor
 import am.mobilechatgpt.device.DeviceToolRegistry
 import am.mobilechatgpt.domain.tool.DeviceToolCommand
@@ -31,7 +33,7 @@ class RuntimeVerticalSliceTest {
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun homeDashboardOpenAppAndProjectBrainReporting() = runBlocking {
+    fun homeDashboardOpenAppProjectBrainAndSecureDeviceBridge() = runBlocking {
         waitForText("Backend ok", substring = true)
         waitForText("Runtime QA Project")
 
@@ -43,7 +45,7 @@ class RuntimeVerticalSliceTest {
         composeRule.onNodeWithText("Open app").performClick()
         waitForFocusedPackage("com.android.settings")
 
-        // Return to MobileChatGpt for the remaining deterministic checks.
+        // Return to MobileChatGpt for deterministic Project Brain and bridge checks.
         shell("am start -W -n am.mobilechatgpt/.app.MainActivity")
 
         val context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -78,7 +80,7 @@ class RuntimeVerticalSliceTest {
         assertFalse(missingResult.success)
         assertTrue(missingResult.code in setOf("app_not_found", "launch_failed", "security_error"))
 
-        // A successful tool call must reach Project Brain's complete endpoint.
+        // A successful direct tool call must still reach Project Brain's complete endpoint.
         val successToolCall = createToolCall(project.id, "com.android.settings")
         val successResult = executor.execute(
             context,
@@ -93,6 +95,49 @@ class RuntimeVerticalSliceTest {
         assertEquals("opened", successResult.code)
         assertEquals("completed", getToolCallStatus(successToolCall))
         waitForFocusedPackage("com.android.settings")
+
+        // Secure device bridge: one-time pairing -> Keystore storage -> claim -> open_app -> completion.
+        val credentialStore = DeviceCredentialStore(context)
+        credentialStore.clear()
+        val pairingCode = requestJson(
+            "POST",
+            "device-pairings",
+            JSONObject().put("ttl_seconds", 600).toString(),
+        ).getString("pairing_code")
+
+        val bridgeBackend = BackendClient(authTokenProvider = credentialStore)
+        val registration = bridgeBackend.registerDevice(pairingCode, "Runtime Emulator")
+        credentialStore.save(registration.deviceId, registration.deviceToken)
+        assertTrue(credentialStore.isPaired())
+        assertEquals(registration.deviceId, credentialStore.deviceId())
+        assertEquals(registration.deviceToken, credentialStore.token())
+
+        val storedValues = context.getSharedPreferences(
+            DeviceCredentialStore.PREFERENCES_NAME,
+            Context.MODE_PRIVATE,
+        ).all.values.map { it.toString() }
+        assertTrue(storedValues.none { it.contains(registration.deviceToken) })
+
+        val queued = requestJson(
+            "POST",
+            "devices/${registration.deviceId}/commands",
+            JSONObject()
+                .put("project_id", project.id)
+                .put("tool_name", "open_app")
+                .put("payload", JSONObject().put("package_name", "com.android.settings"))
+                .put("idempotency_key", "runtime-emulator-open-settings")
+                .put("external_side_effect", false)
+                .toString(),
+        )
+        assertEquals("queued", queued.getString("status"))
+
+        val bridgeResult = DeviceCommandProcessor(DeviceToolRegistry(), bridgeBackend)
+            .claimAndExecute(context)
+        assertEquals("completed", bridgeResult.status)
+        assertTrue(bridgeResult.toolResult?.success == true)
+        assertEquals("completed", getToolCallStatus(queued.getString("tool_call_id")))
+        waitForFocusedPackage("com.android.settings")
+        credentialStore.clear()
     }
 
     private fun waitForText(text: String, substring: Boolean = false) {
