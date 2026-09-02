@@ -1,0 +1,44 @@
+name: Bootstrap Monorepo
+
+on:
+  push:
+    paths:
+      - '.bootstrap/READY'
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reconstruct and verify source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .bootstrap/chunk-* > "$RUNNER_TEMP/mobilechatgpt-source.tgz.b64"
+          base64 -d "$RUNNER_TEMP/mobilechatgpt-source.tgz.b64" > "$RUNNER_TEMP/mobilechatgpt-source.tgz"
+          echo "32ae9f488a2966a4c45b2f2a0bea6effccb6e2d7ab7c0f0584bc21e1a48f66f2  $RUNNER_TEMP/mobilechatgpt-source.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/mobilechatgpt-source.tgz" -C .
+
+      - name: Replace bootstrap payload with source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .bootstrap
+          rm -f .github/workflows/bootstrap-monorepo.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo "No migration changes detected."
+            exit 0
+          fi
+          git commit -m "feat: migrate MobileChatGpt monorepo"
+          git push origin HEAD:main
