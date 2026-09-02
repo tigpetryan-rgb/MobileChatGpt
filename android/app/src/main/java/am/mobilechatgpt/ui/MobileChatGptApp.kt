@@ -14,17 +14,20 @@ import am.mobilechatgpt.data.backend.DeviceCredentialStore
 import am.mobilechatgpt.device.DeviceCommandProcessor
 import am.mobilechatgpt.device.DeviceToolExecutor
 import am.mobilechatgpt.device.DeviceToolRegistry
+import am.mobilechatgpt.domain.model.ApprovalSummary
 import am.mobilechatgpt.domain.model.HealthStatus
 import am.mobilechatgpt.domain.model.ProjectStatus
 import am.mobilechatgpt.domain.model.ProjectSummary
 import am.mobilechatgpt.domain.tool.DeviceToolCommand
 import am.mobilechatgpt.domain.tool.DeviceToolResult
+import am.mobilechatgpt.ui.screens.ApprovalCenterScreen
 import am.mobilechatgpt.ui.screens.HomeScreen
 import am.mobilechatgpt.ui.screens.ProjectDashboardScreen
 import kotlinx.coroutines.launch
 
 private sealed interface Screen {
     data object Home : Screen
+    data object ApprovalCenter : Screen
     data class ProjectDashboard(val project: ProjectSummary) : Screen
 }
 
@@ -42,6 +45,10 @@ fun MobileChatGptApp(appContext: Context) {
     var health by remember { mutableStateOf<HealthStatus?>(null) }
     var projects by remember { mutableStateOf<List<ProjectSummary>>(emptyList()) }
     var homeError by remember { mutableStateOf<String?>(null) }
+    var approvals by remember { mutableStateOf<List<ApprovalSummary>>(emptyList()) }
+    var approvalError by remember { mutableStateOf<String?>(null) }
+    var processingApprovalId by remember { mutableStateOf<String?>(null) }
+    var approvalDecisionMessage by remember { mutableStateOf<String?>(null) }
     var projectStatus by remember { mutableStateOf<ProjectStatus?>(null) }
     var projectError by remember { mutableStateOf<String?>(null) }
     var lastToolResult by remember { mutableStateOf<DeviceToolResult?>(null) }
@@ -52,12 +59,22 @@ fun MobileChatGptApp(appContext: Context) {
         )
     }
 
+    suspend fun refreshApprovals() {
+        runCatching { backend.listPendingApprovals() }
+            .onSuccess {
+                approvals = it
+                approvalError = null
+            }
+            .onFailure { approvalError = it.message ?: "Unable to load approvals" }
+    }
+
     suspend fun refreshHome() {
         runCatching {
             health = backend.health()
             projects = backend.listProjects()
             homeError = null
         }.onFailure { homeError = it.message }
+        refreshApprovals()
     }
 
     suspend fun executeLocalTool(projectId: String, toolName: String, payload: Map<String, String>) {
@@ -71,6 +88,25 @@ fun MobileChatGptApp(appContext: Context) {
         )
     }
 
+    fun decideApproval(approval: ApprovalSummary, approve: Boolean) {
+        if (!approval.isActionable || processingApprovalId != null) return
+        scope.launch {
+            processingApprovalId = approval.id
+            approvalDecisionMessage = null
+            runCatching {
+                if (approve) backend.approveApproval(approval.id)
+                else backend.rejectApproval(approval.id)
+            }.onSuccess { result ->
+                approvalDecisionMessage = "${result.status.replaceFirstChar { it.uppercase() }} · ${approval.toolName}"
+                refreshApprovals()
+            }.onFailure { error ->
+                approvalError = error.message ?: "Approval decision failed"
+                refreshApprovals()
+            }
+            processingApprovalId = null
+        }
+    }
+
     LaunchedEffect(Unit) { refreshHome() }
 
     when (val current = screen) {
@@ -80,8 +116,13 @@ fun MobileChatGptApp(appContext: Context) {
             error = homeError,
             deviceBridgeStatus = deviceBridgeStatus,
             devicePaired = devicePaired,
+            pendingApprovalCount = approvals.size,
             onRefresh = { scope.launch { refreshHome() } },
             onProjectSelected = { project -> screen = Screen.ProjectDashboard(project) },
+            onOpenApprovals = {
+                screen = Screen.ApprovalCenter
+                scope.launch { refreshApprovals() }
+            },
             onPairDevice = { pairingCode ->
                 scope.launch {
                     deviceBridgeStatus = "Pairing device…"
@@ -111,6 +152,20 @@ fun MobileChatGptApp(appContext: Context) {
                     }
                 }
             },
+        )
+
+        Screen.ApprovalCenter -> ApprovalCenterScreen(
+            approvals = approvals,
+            error = approvalError,
+            processingApprovalId = processingApprovalId,
+            decisionMessage = approvalDecisionMessage,
+            onBack = {
+                screen = Screen.Home
+                scope.launch { refreshApprovals() }
+            },
+            onRefresh = { scope.launch { refreshApprovals() } },
+            onApprove = { approval -> decideApproval(approval, approve = true) },
+            onReject = { approval -> decideApproval(approval, approve = false) },
         )
 
         is Screen.ProjectDashboard -> {

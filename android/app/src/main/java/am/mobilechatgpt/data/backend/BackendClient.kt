@@ -1,6 +1,8 @@
 package am.mobilechatgpt.data.backend
 
 import am.mobilechatgpt.BuildConfig
+import am.mobilechatgpt.domain.model.ApprovalDecisionResult
+import am.mobilechatgpt.domain.model.ApprovalSummary
 import am.mobilechatgpt.domain.model.HealthStatus
 import am.mobilechatgpt.domain.model.ProjectStatus
 import am.mobilechatgpt.domain.model.ProjectSummary
@@ -66,6 +68,48 @@ class BackendClient(
             nextTasks = taskArray(json.optJSONArray("next_tasks")),
         )
     }
+
+    suspend fun listPendingApprovals(): List<ApprovalSummary> = withContext(Dispatchers.IO) {
+        val array = requestJsonArray("GET", "approval-center?status=pending")
+        buildList {
+            for (index in 0 until array.length()) {
+                val item = array.getJSONObject(index)
+                add(
+                    ApprovalSummary(
+                        id = item.getString("id"),
+                        projectId = item.getString("project_id"),
+                        taskId = item.optNullableString("task_id"),
+                        toolName = item.getString("tool_name"),
+                        riskClass = item.getInt("risk_class"),
+                        status = item.getString("status"),
+                        payloadHash = item.getString("payload_hash"),
+                        humanPreview = item.getString("human_preview"),
+                        reason = item.optNullableString("reason"),
+                        expiresAt = item.optNullableString("expires_at"),
+                        createdAt = item.optNullableString("created_at"),
+                    )
+                )
+            }
+        }
+    }
+
+    suspend fun approveApproval(approvalId: String): ApprovalDecisionResult =
+        approvalDecision(approvalId, "approve")
+
+    suspend fun rejectApproval(approvalId: String): ApprovalDecisionResult =
+        approvalDecision(approvalId, "reject")
+
+    private suspend fun approvalDecision(approvalId: String, decision: String): ApprovalDecisionResult =
+        withContext(Dispatchers.IO) {
+            val json = requestJson(
+                method = "POST",
+                path = "approvals/${encodePath(approvalId)}/$decision",
+            )
+            ApprovalDecisionResult(
+                id = json.getString("id"),
+                status = json.getString("status"),
+            )
+        }
 
     suspend fun registerDevice(pairingCode: String, name: String): DeviceRegistration =
         withContext(Dispatchers.IO) {
@@ -171,6 +215,9 @@ class BackendClient(
             }
         }
     }
+
+    private fun JSONObject.optNullableString(key: String): String? =
+        if (isNull(key)) null else optString(key).takeIf(String::isNotBlank)
 
     private fun requestJson(method: String, path: String, body: String? = null): JSONObject =
         JSONObject(request(method, path, body))

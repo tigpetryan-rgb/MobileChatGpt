@@ -6,6 +6,7 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import am.mobilechatgpt.app.MainActivity
@@ -19,6 +20,7 @@ import java.io.FileInputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.runBlocking
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -33,7 +35,7 @@ class RuntimeVerticalSliceTest {
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun safeDeviceToolsAndSecureBridgeVerticalSlice() = runBlocking {
+    fun safeToolsSecureBridgeAndApprovalCenterVerticalSlice() = runBlocking {
         waitForText("Backend ok", substring = true)
         waitForText("Runtime QA Project")
 
@@ -45,7 +47,6 @@ class RuntimeVerticalSliceTest {
         composeRule.onNodeWithText("Device tool · open_url").assertIsDisplayed()
         composeRule.onNodeWithText("Device tool · share_text").assertIsDisplayed()
 
-        // Exercise the existing Dashboard open_app callback with its known package.
         composeRule.onNodeWithText("Open app").performClick()
         waitForFocusedPackage("com.android.settings")
         returnToApp()
@@ -56,7 +57,6 @@ class RuntimeVerticalSliceTest {
         val registry = DeviceToolRegistry()
         val executor = DeviceToolExecutor(registry, backend)
 
-        // open_app malformed names remain safely rejected and reported to Project Brain.
         val invalidToolCall = createToolCall(project.id, "bad package name")
         val invalidResult = executor.execute(
             context,
@@ -71,7 +71,6 @@ class RuntimeVerticalSliceTest {
         assertEquals("invalid_payload", invalidResult.code)
         assertEquals("failed", getToolCallStatus(invalidToolCall))
 
-        // New tools reject unsafe / hidden behavior locally before any Intent dispatch.
         val unsafeUrl = registry.execute(
             context,
             DeviceToolCommand(
@@ -94,7 +93,6 @@ class RuntimeVerticalSliceTest {
         assertFalse(hiddenRecipient.success)
         assertEquals("invalid_payload", hiddenRecipient.code)
 
-        // Existing direct open_app success still completes its ToolCall.
         val successToolCall = createToolCall(project.id, "com.android.settings")
         val successResult = executor.execute(
             context,
@@ -111,7 +109,6 @@ class RuntimeVerticalSliceTest {
         waitForFocusedPackage("com.android.settings")
         returnToApp()
 
-        // Secure device bridge: one-time pairing -> Keystore storage -> command claim/execution.
         val credentialStore = DeviceCredentialStore(context)
         credentialStore.clear()
         val pairingCode = requestJson(
@@ -140,7 +137,7 @@ class RuntimeVerticalSliceTest {
             project.id,
             "open_app",
             JSONObject().put("package_name", "com.android.settings"),
-            "runtime-emulator-open-settings-v2",
+            "runtime-emulator-open-settings-v3",
         )
         val openAppBridge = processor.claimAndExecute(context)
         assertEquals("completed", openAppBridge.status)
@@ -149,14 +146,12 @@ class RuntimeVerticalSliceTest {
         waitForFocusedPackage("com.android.settings")
         returnToApp()
 
-        // open_url is delivered through the same authenticated bridge. A minimal emulator may
-        // have no HTTP handler, which is an expected controlled failure; no network response is required.
         val openUrlQueued = enqueueDeviceCommand(
             registration.deviceId,
             project.id,
             "open_url",
             JSONObject().put("url", "https://example.com/runtime-qa"),
-            "runtime-emulator-open-url-v1",
+            "runtime-emulator-open-url-v2",
         )
         val openUrlBridge = processor.claimAndExecute(context)
         val openUrlCode = openUrlBridge.toolResult?.code
@@ -170,7 +165,6 @@ class RuntimeVerticalSliceTest {
         }
         returnToApp()
 
-        // share_text must only open the Android chooser. It never selects a target or sends.
         val shareQueued = enqueueDeviceCommand(
             registration.deviceId,
             project.id,
@@ -178,7 +172,7 @@ class RuntimeVerticalSliceTest {
             JSONObject()
                 .put("text", "Runtime QA share text")
                 .put("chooser_title", "Runtime QA Share"),
-            "runtime-emulator-share-text-v1",
+            "runtime-emulator-share-text-v2",
         )
         val shareBridge = processor.claimAndExecute(context)
         assertEquals("completed", shareBridge.status)
@@ -186,6 +180,48 @@ class RuntimeVerticalSliceTest {
         assertEquals("completed", getToolCallStatus(shareQueued.getString("tool_call_id")))
         waitForChooserActivity()
         shell("input keyevent KEYCODE_BACK")
+        returnToApp()
+
+        // Approval Center: seed two pending approvals, then decide both via real Compose UI.
+        val openUrlApproval = createApproval(
+            projectId = project.id,
+            toolName = "open_url",
+            riskClass = 2,
+            payload = JSONObject().put("url", "https://example.com/approved"),
+            preview = "Open URL approval test",
+            reason = "Runtime Approval Center QA",
+        )
+        val shareApproval = createApproval(
+            projectId = project.id,
+            toolName = "share_text",
+            riskClass = 3,
+            payload = JSONObject().put("text", "Approval test share"),
+            preview = "Share text approval test",
+            reason = "Runtime Approval Center QA",
+        )
+
+        composeRule.onNodeWithText("Back").performClick()
+        composeRule.onNodeWithText("Refresh").performClick()
+        waitForText("Approvals (2)")
+        composeRule.onNodeWithText("Approvals (2)").performClick()
+
+        waitForText("Approval Center")
+        waitForText("Share text approval test")
+        waitForText(shareApproval.getString("payload_hash"))
+        composeRule.onNodeWithText("Reject share_text").performScrollTo().performClick()
+        waitForText("Rejected · share_text")
+        assertEquals("rejected", getApprovalStatus(shareApproval.getString("id")))
+
+        waitForText("Open URL approval test")
+        waitForText(openUrlApproval.getString("payload_hash"))
+        composeRule.onNodeWithText("Approve open_url").performScrollTo().performClick()
+        waitForText("Approved · open_url")
+        waitForText("No pending approvals.")
+        assertEquals("approved", getApprovalStatus(openUrlApproval.getString("id")))
+
+        // Approval UI changes approval state only. The approved item remains unconsumed.
+        assertTrue(isApprovalListed(openUrlApproval.getString("id"), "approved"))
+        assertTrue(isApprovalListed(shareApproval.getString("id"), "rejected"))
 
         credentialStore.clear()
     }
@@ -210,9 +246,7 @@ class RuntimeVerticalSliceTest {
 
     private fun waitForChooserActivity() {
         repeat(40) {
-            val activityState = shell("dumpsys activity activities")
-            val windowState = shell("dumpsys window windows")
-            val state = activityState + windowState
+            val state = shell("dumpsys activity activities") + shell("dumpsys window windows")
             if (
                 state.contains("ChooserActivity") ||
                 state.contains("ResolverActivity") ||
@@ -254,10 +288,52 @@ class RuntimeVerticalSliceTest {
             .toString(),
     )
 
+    private fun createApproval(
+        projectId: String,
+        toolName: String,
+        riskClass: Int,
+        payload: JSONObject,
+        preview: String,
+        reason: String,
+    ): JSONObject = requestJson(
+        "POST",
+        "approvals",
+        JSONObject()
+            .put("project_id", projectId)
+            .put("tool_name", toolName)
+            .put("risk_class", riskClass)
+            .put("payload", payload)
+            .put("human_preview", preview)
+            .put("reason", reason)
+            .put("ttl_seconds", 600)
+            .toString(),
+    )
+
+    private fun getApprovalStatus(approvalId: String): String {
+        for (status in listOf("pending", "approved", "rejected", "expired", "consumed")) {
+            if (isApprovalListed(approvalId, status)) return status
+        }
+        return "missing"
+    }
+
+    private fun isApprovalListed(approvalId: String, status: String): Boolean {
+        val items = requestJsonArray("GET", "approval-center?status=$status")
+        for (index in 0 until items.length()) {
+            if (items.getJSONObject(index).getString("id") == approvalId) return true
+        }
+        return false
+    }
+
     private fun getToolCallStatus(toolCallId: String): String =
         requestJson("GET", "tool-calls/$toolCallId").getString("status")
 
-    private fun requestJson(method: String, path: String, body: String? = null): JSONObject {
+    private fun requestJson(method: String, path: String, body: String? = null): JSONObject =
+        JSONObject(request(method, path, body))
+
+    private fun requestJsonArray(method: String, path: String, body: String? = null): JSONArray =
+        JSONArray(request(method, path, body))
+
+    private fun request(method: String, path: String, body: String? = null): String {
         val base = BuildConfig.BACKEND_BASE_URL.let { if (it.endsWith('/')) it else "$it/" }
         val connection = (URL(base + path).openConnection() as HttpURLConnection).apply {
             requestMethod = method
@@ -275,7 +351,7 @@ class RuntimeVerticalSliceTest {
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
             check(status in 200..299) { "Backend HTTP $status: $text" }
-            JSONObject(text)
+            text
         } finally {
             connection.disconnect()
         }

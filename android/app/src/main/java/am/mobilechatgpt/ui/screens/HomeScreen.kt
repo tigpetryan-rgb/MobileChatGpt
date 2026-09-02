@@ -23,9 +23,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import am.mobilechatgpt.domain.model.HealthStatus
@@ -39,8 +39,10 @@ fun HomeScreen(
     error: String?,
     deviceBridgeStatus: String,
     devicePaired: Boolean,
+    pendingApprovalCount: Int,
     onRefresh: () -> Unit,
     onProjectSelected: (ProjectSummary) -> Unit,
+    onOpenApprovals: () -> Unit,
     onPairDevice: (String) -> Unit,
     onSyncDevice: () -> Unit,
 ) {
@@ -70,6 +72,25 @@ fun HomeScreen(
                 error?.let {
                     Spacer(Modifier.height(8.dp))
                     Text("Backend error: $it", color = MaterialTheme.colorScheme.error)
+                }
+            }
+
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text("Approvals", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            if (pendingApprovalCount == 0) "No pending approvals"
+                            else "$pendingApprovalCount pending approval(s)",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Button(onClick = onOpenApprovals) {
+                            Text("Approvals ($pendingApprovalCount)")
+                        }
+                    }
                 }
             }
 
