@@ -11,7 +11,8 @@
 - GitHub monorepo migration: **COMPLETE**
 - Android v0.1 implementation: **CREATED**
 - Android v0.1 clean GitHub Gradle build: **PASS**
-- Android v0.1 emulator/physical-device verification: **NOT YET COMPLETE**
+- Android v0.1 emulator runtime verification: **PASS / VERIFIED**
+- Backend ↔ Android secure device registration + command bridge: **CURRENT CHECKPOINT**
 
 # CANONICAL SOURCE CONTROL STATE
 
@@ -45,85 +46,81 @@ Implemented and validated:
 - Backend v0.3 local verification: **38/38 tests PASS**, compile PASS, ZIP integrity PASS
 - GitHub Backend CI clean runner verification: **SUCCESS**, including PostgreSQL/migration checks
 
-# ANDROID v0.1 IMPLEMENTED
+# ANDROID v0.1 — BUILD + RUNTIME VERIFIED
+
+Implemented:
 
 - Kotlin + Jetpack Compose project skeleton
 - `ui / domain / data-backend / device` package separation
 - Home / Projects screen
 - Project Dashboard shell
-- backend `GET /health` connectivity
-- backend `GET /projects` connectivity
-- backend `GET /projects/{id}/status` connectivity
+- backend `/health`, `/projects`, `/projects/{id}/status` connectivity
 - release HTTPS enforcement; debug-only HTTP local development
 - no embedded secrets
 - `DeviceTool` contract + `DeviceToolResult`
 - `open_app` safe tool using official Android launch APIs/intents
 - no AccessibilityService
 - no `QUERY_ALL_PACKAGES` permission
-- `DeviceToolExecutor` result-return path to Project Brain tool-call complete/fail endpoints
+- `DeviceToolExecutor` result-return path to Project Brain ToolCall complete/fail endpoints
 - local pure Kotlin validator tests: **5/5 PASS**
-- static safety/checkpoint checks: PASS
+- static safety/checkpoint checks: **PASS**
 
-# GITHUB / CI CHECKPOINT — COMPLETE
-
-Private monorepo migration is complete.
-
-Permanent CI workflows:
-
-- Backend CI
-- Android CI
-- Secret Pattern Guard
-
-Verified results:
-
-- Backend CI: **SUCCESS**
-- Secret Pattern Guard: **SUCCESS**
-- Android SDK/API 37 setup: **SUCCESS**
-- Gradle 9.5.0 setup: **SUCCESS**
-- `testDebugUnitTest`: **SUCCESS**
-- `assembleDebug`: **SUCCESS**
-- debug APK upload: **SUCCESS**
-
-Successful Android workflow run:
+Clean GitHub Android build:
 
 - Run ID: `33614336495`
 - Source commit: `e5649e5f155655a4bf6d0e98a19644b18f1a6a1c`
 - Artifact: `mobile-chatgpt-debug-apk`
 - Artifact ID: `9840387743`
-- Artifact SHA-256 digest: `c8e4a2165b707a837367d769c0a1280a2e1cd7cbdec85a6fd8b34a742d44f879`
+- Artifact SHA-256: `c8e4a2165b707a837367d769c0a1280a2e1cd7cbdec85a6fd8b34a742d44f879`
 
-CI bugs discovered and fixed during clean-run verification:
+Real Android emulator runtime verification:
 
-1. Backend workflow invalid floating `setup-uv@v10` reference → pinned to published `v10.0.1`.
-2. Android API 37 SDK identifier → corrected to `platforms;android-37.0`.
-3. Debug manifest cleartext override conflict → explicit debug-only manifest override; `main/release` remains `usesCleartextTraffic=false`.
+- Workflow: `Android Emulator Runtime QA`
+- Run ID: `33618580459`
+- Source commit: `69d9d8bbf32ee7f7b859c4e29a407c4aeb58c6c5`
+- Result: **SUCCESS**
+- API 36 x86_64 emulator boot: **PASS**
+- Project Brain backend startup + Alembic seed: **PASS**
+- `connectedDebugAndroidTest`: **PASS**
+- Home → Project Dashboard: **PASS**
+- backend `/health`, project list/status: **PASS**
+- `open_app(com.android.settings)`: **PASS**
+- malformed package rejection: **PASS**
+- missing package controlled failure: **PASS**
+- Project Brain ToolCall complete/fail reporting: **PASS**
+- backend health after emulator test: **PASS**
+- Evidence artifact: `android-runtime-qa-evidence`
+- Evidence artifact ID: `9842116802`
+- Evidence SHA-256: `6c2de67f76ece6e63ac1e7357ec15cadfd6bb5d5adfc181b901ec41fe87805cd`
+
+Release invariant remains required and previously statically/build verified:
+`usesCleartextTraffic=false`; release backend URLs must be HTTPS.
 
 # CURRENT NEXT CHECKPOINT — DO NOT SKIP
 
-## ANDROID EMULATOR / PHYSICAL DEVICE VERIFICATION FOR v0.1
+## BACKEND ↔ ANDROID SECURE DEVICE REGISTRATION + COMMAND BRIDGE
 
-The Gradle/build gate is now DONE. The next unfinished gate is real runtime verification on an emulator or physical Android device.
+Goal: turn the locally callable Android `open_app` tool into a securely paired backend-delivered device command while preserving Project Brain ToolCall authority, idempotency, auditability and lease recovery.
 
 ## REQUIRED EXECUTION ORDER
 
-1. Obtain the successful `mobile-chatgpt-debug-apk` artifact from GitHub Actions, or build the same `main` commit in an Android-SDK-enabled environment.
-2. Install the debug APK on an Android emulator or physical device.
-3. Launch MobileChatGpt and verify app startup without crash.
-4. Verify `Home → Projects → Project Dashboard` flow.
-5. Configure a reachable Project Brain backend URL and verify `/health`.
-6. Verify project list/status retrieval against the backend.
-7. Verify `open_app` using a known launchable package, initially `com.android.settings`.
-8. Verify malformed/invalid package names are rejected safely.
-9. Verify a missing/non-launchable package returns a controlled failure result rather than crashing.
-10. Verify DeviceTool result reporting reaches Project Brain complete/fail endpoints when backend is connected.
-11. Verify release configuration still rejects cleartext HTTP backend URLs / `usesCleartextTraffic=false` remains the release invariant.
-12. Record concrete emulator/device results in this file and commit them to `main`.
+1. Add durable `Device`, one-time `DevicePairing`, and `DeviceCommand` records via Alembic.
+2. Store only hashes of pairing/device bearer credentials on the backend.
+3. Make pairing codes short-lived and single-use.
+4. Restrict the first bridge milestone to `open_app`; do not silently enable later tools.
+5. Enqueue device work only through validated domain services that create/reuse Project Brain `ToolCall` records.
+6. Require an idempotency key for every backend-delivered device command.
+7. Add device-authenticated claim / heartbeat / complete / fail endpoints.
+8. Add bounded stale-lease recovery; exhausted delivery must fail the linked ToolCall deterministically.
+9. Add Android Keystore-backed device credential storage; never store a plaintext token in source/APK.
+10. Add Android pairing + claim/execute/report client path.
+11. Verify the full backend → paired Android emulator → `open_app` → backend completion vertical slice.
+12. Record exact backend CI and emulator evidence here before marking the bridge complete.
 
 # DO NOT START YET
 
-Until the emulator/device checkpoint above passes, do not begin these later product phases except for work strictly necessary to unblock verification:
+Until the secure device bridge checkpoint passes, do not begin:
 
-- Backend ↔ Android device registration / secure command bridge
 - `open_url` / `share_text`
 - approval UI
 - generic Accessibility-based autonomous UI control
@@ -133,7 +130,7 @@ Until the emulator/device checkpoint above passes, do not begin these later prod
 
 # NEXT ONLY AFTER THIS CHECKPOINT PASSES
 
-`Backend ↔ Android device registration + secure command bridge → open_url/share_text → approval UI → full vertical slice → ChatGPT/MCP bridge → reliability/security → Beta`
+`open_url/share_text → approval UI → full vertical slice → ChatGPT/MCP bridge → reliability/security → Beta`
 
 # RULE
 
