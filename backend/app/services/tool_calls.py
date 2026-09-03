@@ -42,10 +42,19 @@ def start_tool_call(
         if existing:
             if existing.project_id != project_id or existing.task_id != task_id or existing.payload_hash != digest:
                 raise ToolCallError("Idempotency key was already used for a different call")
+            if existing.approval_id != approval_id:
+                raise ToolCallError("Idempotency key was already used with a different approval")
             return existing, True
 
     if approval_id:
-        consume_approval(db, approval_id=approval_id, tool_name=tool_name, payload=payload)
+        consume_approval(
+            db,
+            approval_id=approval_id,
+            project_id=project_id,
+            task_id=task_id,
+            tool_name=tool_name,
+            payload=payload,
+        )
 
     call = ToolCall(
         project_id=project_id,
