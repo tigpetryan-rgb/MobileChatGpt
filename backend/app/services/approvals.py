@@ -153,17 +153,26 @@ def consume_approval(
     db: Session,
     *,
     approval_id: str,
+    project_id: str,
+    task_id: str | None,
     tool_name: str,
     payload: dict,
     actor: str = "tool-runtime",
 ) -> Approval:
-    approval = db.get(Approval, approval_id)
+    stmt = select(Approval).where(Approval.id == approval_id)
+    if db.get_bind().dialect.name == "postgresql":
+        stmt = stmt.with_for_update()
+    approval = db.scalar(stmt)
     if not approval:
         raise ApprovalError("Approval not found")
     if expire_approval_if_needed(approval):
         raise ApprovalError("Approval has expired")
     if approval.status != ApprovalStatus.APPROVED.value:
         raise ApprovalError("Approval is not approved")
+    if approval.project_id != project_id:
+        raise ApprovalError("Approval project does not match")
+    if approval.task_id != task_id:
+        raise ApprovalError("Approval task does not match")
     if approval.tool_name != tool_name:
         raise ApprovalError("Approval tool does not match")
     if approval.payload_hash != payload_hash(payload):
