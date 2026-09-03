@@ -26,6 +26,8 @@ from app.services.project_controls import ProjectControlError, continue_project_
 from app.services.status import project_status_snapshot
 
 
+MOBILE_APPROVAL_HANDOFF_URL = "mobilechatgpt://approvals"
+
 READ_ONLY = ToolAnnotations(
     read_only_hint=True,
     destructive_hint=False,
@@ -126,6 +128,7 @@ class ApprovalSummary(BaseModel):
 
 class ApprovalListResult(BaseModel):
     approvals: list[ApprovalSummary]
+    handoff_url: str = MOBILE_APPROVAL_HANDOFF_URL
 
 
 class ContinueProjectResult(BaseModel):
@@ -250,7 +253,8 @@ def build_mcp_server() -> MCPServer:
         title="List pending approvals",
         description=(
             "Use this when you need approvals that still require an explicit user decision. "
-            "Returns safe preview metadata and the exact payload hash, never the raw normalized payload."
+            "Returns safe preview metadata, the exact payload hash, and a navigation-only MobileChatGpt handoff; "
+            "never the raw normalized payload."
         ),
         annotations=READ_ONLY,
     )
