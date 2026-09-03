@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Annotated
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -107,7 +108,7 @@ class ApprovalListResult(BaseModel):
 def _project_or_error(db: Session, project_id: str) -> Project:
     project = db.get(Project, project_id)
     if not project:
-        raise ValueError("Project not found")
+        raise ToolError("Project not found")
     return project
 
 
