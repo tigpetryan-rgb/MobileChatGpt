@@ -11,6 +11,12 @@ from app.db.session import engine
 from app.mcp.server import project_brain_mcp
 
 
+# Build the mounted transport once so the parent lifespan manages the exact
+# session manager used by the ASGI app. Stateless HTTP keeps auth context
+# request-scoped for both modern and legacy clients.
+mcp_http_app = project_brain_mcp.streamable_http_app(stateless_http=True)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Keeps the skeleton runnable immediately. Production uses Alembic migrations.
@@ -29,7 +35,7 @@ def create_app() -> FastAPI:
 
     # Mount last so the existing Project Brain HTTP API and docs routes retain
     # precedence while the MCP sub-app serves its standard /mcp endpoint.
-    app.mount("/", project_brain_mcp.streamable_http_app())
+    app.mount("/", mcp_http_app)
     return app
 
 
