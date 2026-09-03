@@ -14,7 +14,8 @@
 - `open_app`: **COMPLETE / VERIFIED**
 - `open_url` + `share_text` safe device tools: **COMPLETE / VERIFIED**
 - Approval Center / explicit approval UI: **COMPLETE / VERIFIED**
-- Approved-action full vertical slice: **CURRENT CHECKPOINT**
+- Approved-action full vertical slice: **COMPLETE / VERIFIED**
+- ChatGPT / MCP bridge: **CURRENT CHECKPOINT**
 
 # CANONICAL SOURCE CONTROL STATE
 
@@ -153,45 +154,95 @@ Verification:
 - final APK artifact `9876489879`, SHA-256 `a46208ec27867fbbca234b1306660c1d30a657547feba14cc9ccef56fedafe5c`
 - final runtime evidence artifact `9876558337`, SHA-256 `3f164c386710b0b1afbe011fce2975f613a1a9e5267cef209eeb5bd3b1f935b5`
 
+# APPROVED-ACTION FULL VERTICAL SLICE — COMPLETE / VERIFIED
+
+Goal achieved: an explicit approval decision remains decision-only, and a later normal execution path consumes exactly that approval and executes through Project Brain → ToolCall → secure device bridge → Android DeviceToolRegistry without weakening exact-context, expiry, single-use, idempotency or existing safe-tool constraints.
+
+Implementation commits:
+
+- `875f900b21afa9fddbed5f1fd0e50773ab18013c` — bind approval consumption to exact execution context and PostgreSQL row lock
+- `5e120cabb1ca95d2f5d0698fa374890d25d7bfdc` — enforce approval binding during ToolCall idempotent replay
+- `70b34a1d4ea6950e800929d6e981ecc26543ff34` — preserve manual approval-consume compatibility without creating an execution bypass
+- `1a41c804306d88622a6cf0b1dc1aae202e49c3c2` — regression coverage for exact approval execution binding
+- `8aad3a75b5e57e787f99afa32bc38f6fe4f4dd86` — prove approved action through real Android emulator vertical slice
+- `0def5808b94d50887e859c23c53837a7b1981146` — return clean HTTP 409 + rollback for invalid device approval binding
+- `fee5177e5a40fea57ef0c0b440433d4f935e708d` — device-path regression test for changed-vs-exact approved payload
+
+Verified semantics:
+
+- approval consumption is bound to the same `project_id`, exact `task_id` including null-vs-non-null, `tool_name`, and exact normalized payload hash
+- PostgreSQL first consumption locks the Approval row with `FOR UPDATE`, preventing concurrent double-consumption
+- first valid execution consumes approval and creates the linked ToolCall/DeviceCommand in the same transaction; rollback does not strand an approval as consumed
+- exact idempotent replay returns the same ToolCall/DeviceCommand without consuming again
+- reused idempotency key with a different approval ID is rejected
+- wrong project, wrong task, wrong tool, changed payload, expired and already-consumed approval paths are rejected
+- invalid approval binding through the device enqueue API returns conflict/rollback rather than a server error and preserves the approval when execution was not created
+- Approval Center approve tap still does not enqueue or execute anything
+- the emulator proves `approved` immediately after UI approval, then a later separate enqueue changes it to `consumed`
+- Android claims and executes the approved command only through the existing safe `DeviceToolRegistry`
+- linked ToolCall completion/failure remains deterministic
+- exact replay returns the same command/call and a subsequent device claim is idle, proving no duplicate execution
+- this `open_url` approval gate is a vertical-slice proof only; normal product classification remains R1/local/reversible
+
+Verification:
+
+- approval-binding Backend CI `33710588762`: **SUCCESS**
+- final Backend CI `33710938879`: **SUCCESS** on rerun after the first attempt failed before tests because GitHub Actions could not fetch the external Astral uv version manifest; successful rerun passed dependencies, tests, Python compile and PostgreSQL migration smoke
+- final Secret Pattern Guard `33710938875`: **SUCCESS**
+- Android CI `33710650198`: **SUCCESS** (`8aad3a75`; no Android source changed afterward)
+- APK artifact `9876800838`, SHA-256 `7d470ca9a395769920f44353bee92a832106ee65c0e9f4c0c8592c6ca472fa43`
+- implementation Android Emulator Runtime QA `33710649941`: **SUCCESS**
+- implementation runtime evidence artifact `9876876889`, SHA-256 `e8bbb3c2ef32e4c8a13688c46886017534e153be3cef1aea902500594aaf1a4c`
+- final Android Emulator Runtime QA `33710938934`: **SUCCESS** on final source head `fee5177e5a40fea57ef0c0b440433d4f935e708d`
+- final runtime evidence artifact `9876957715`, SHA-256 `160584cb95400092fd73590657336c8782751b6c2859018e3a9f4d19fd3c0ce3`
+
 Release invariant remains mandatory:
 `usesCleartextTraffic=false`; release backend URLs must use HTTPS.
 
 # CURRENT NEXT CHECKPOINT — DO NOT SKIP
 
-## APPROVED-ACTION FULL VERTICAL SLICE
+## CHATGPT / MCP BRIDGE
 
-Goal: prove that an explicitly approved action is later executed through the normal Project Brain → ToolCall → secure device bridge pipeline, while preserving exact-context, exact-payload, expiry, single-use and idempotency semantics. Approval UI itself must remain decision-only.
+Goal: expose the durable Project Brain to ChatGPT through a narrow authenticated MCP / ChatGPT App bridge so ChatGPT can read project state and request existing validated project-control operations without becoming an alternate database writer, bypassing approval rules, or directly controlling unsafe device behavior.
 
-For this checkpoint, use the existing `open_url` device path as an explicitly approval-gated test action. This is a vertical-slice proof and **does not reclassify `open_url` globally**; its normal product classification remains R1/local/reversible.
+This checkpoint implements Phase 6 from the master plan:
+
+- MCP server / ChatGPT App
+- project state read tools
+- project control tools
+- status / continue / approve flows
+- approval/status surfaces
+- deep links back to MobileChatGpt when device interaction is required
 
 ## REQUIRED EXECUTION ORDER
 
-1. Strengthen approval consumption so an approval is bound to the same `project_id`, `task_id` (including null-vs-non-null), `tool_name`, and exact normalized payload/hash as the execution that consumes it.
-2. Make first consumption race-safe/single-use under PostgreSQL concurrency (row lock or equivalent transactional guarantee).
-3. Preserve idempotency semantics: an exact replay of an already-created approved ToolCall/DeviceCommand returns the same call/command without trying to consume again; a reused idempotency key with a different approval binding must fail.
-4. Keep approval tap decision-only. Execution must begin only through a later normal execution/enqueue step after authoritative status is `approved`.
-5. Wire the approved `open_url` vertical slice through the existing secure device-command path using the approval ID and exactly the approved payload.
-6. Verify the first valid enqueue atomically consumes the approval and creates the linked ToolCall/DeviceCommand; if enqueue fails transactionally, approval must not be stranded as consumed.
-7. Verify the Android device claims and executes the command through the existing safe `DeviceToolRegistry`, then reports linked ToolCall completion/failure deterministically.
-8. Add regression tests for wrong project, wrong task, wrong tool, changed payload, already-consumed approval, expired approval, replay with same binding, and replay with a different approval binding.
-9. Extend emulator QA from the existing approved-but-unconsumed `open_url` item: prove it is still approved immediately after the UI tap, then enqueue/execute it separately, verify it becomes `consumed`, verify linked ToolCall state, and verify replay does not execute/consume twice.
-10. Keep `share_text` chooser-only behavior, safe-tool `external_side_effect=false`, secure bridge, release HTTPS, no-secret and no-Accessibility invariants green.
-11. Record exact implementation commit, CI runs, APK/runtime artifacts and digests here before moving to ChatGPT/MCP bridge.
+1. Inventory the existing repository for any MCP/ChatGPT bridge skeleton, reusable backend service boundaries and auth configuration before adding new architecture.
+2. Define the smallest MCP surface around existing validated domain/API operations. Read tools first: list projects, read project/status/tasks and list actionable approvals.
+3. Add project-control tools only through existing domain/API services: continue/resume a project and explicit approval decisions. MCP must not write database tables directly.
+4. Preserve approval authority: MCP/ChatGPT must never auto-approve because a tool was invoked, a project is autonomous, or a device is paired. Any approval action exposed to ChatGPT must map to an explicit user-authorized approval operation and retain exact payload/expiry/single-use semantics.
+5. Do not expose device bearer tokens, API secrets, hidden payload fields, raw credentials or unrestricted backend internals through MCP responses.
+6. Keep actual Android actions on the existing secure device bridge. When device interaction is required, return project/action status and a safe MobileChatGpt handoff/deep-link surface rather than introducing remote UI automation.
+7. Add authentication/authorization appropriate for the bridge boundary and reject unauthenticated control operations. Keep credentials outside source control.
+8. Add deterministic MCP contract tests for tool schemas, project scoping, status/continue behavior, approval state handling, validation errors and forbidden direct/bypass actions.
+9. Add an end-to-end bridge verification that reads a real Project Brain project, obtains status, invokes a permitted control operation, and confirms authoritative backend state through the same domain services.
+10. Keep Backend CI, Android CI where Android source changes, Secret Pattern Guard, approval regression tests, secure device bridge and release HTTPS invariants green.
+11. Record exact implementation commits, tests and integration evidence here before moving to automation/reliability/security.
 
 # DO NOT START YET
 
-Until the approved-action vertical slice passes build/runtime verification, do not begin:
+Until the ChatGPT/MCP bridge passes its verification gates, do not begin:
 
-- ChatGPT/MCP bridge implementation
+- broad autonomous external integrations unrelated to the bridge
 - direct recipient selection or autonomous messaging
-- contacts/reminders expansion
+- contacts/reminders expansion unless required by a later approved checkpoint
 - generic Accessibility-based autonomous UI control
 - payments or financial actions
-- unrelated feature expansion
+- weakening approvals for convenience
+- storing API keys/tokens in the repository or Android APK
 
 # NEXT ONLY AFTER THIS CHECKPOINT PASSES
 
-`ChatGPT/MCP bridge → automation/reliability/security → Beta`
+`automation / reliability / security hardening → Beta`
 
 # RULE
 
