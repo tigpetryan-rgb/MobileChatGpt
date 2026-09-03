@@ -15,7 +15,8 @@
 - `open_url` + `share_text` safe device tools: **COMPLETE / VERIFIED**
 - Approval Center / explicit approval UI: **COMPLETE / VERIFIED**
 - Approved-action full vertical slice: **COMPLETE / VERIFIED**
-- ChatGPT / MCP bridge: **CURRENT CHECKPOINT**
+- ChatGPT / MCP bridge: **COMPLETE / VERIFIED**
+- Reliability & Security hardening: **CURRENT CHECKPOINT**
 
 # CANONICAL SOURCE CONTROL STATE
 
@@ -196,53 +197,108 @@ Verification:
 - final Android Emulator Runtime QA `33710938934`: **SUCCESS** on final source head `fee5177e5a40fea57ef0c0b440433d4f935e708d`
 - final runtime evidence artifact `9876957715`, SHA-256 `160584cb95400092fd73590657336c8782751b6c2859018e3a9f4d19fd3c0ce3`
 
+# CHATGPT / MCP BRIDGE — COMPLETE / VERIFIED
+
+Goal achieved: ChatGPT now has a narrow Project Brain bridge that can read authoritative project state and request explicitly scoped validated controls without becoming a second database writer, weakening approval authority, exposing credentials, or remotely automating Android UI.
+
+Implementation commits:
+
+- `58162bcd408c46a3806559b5076b78cdd7a549d3` — add Project Brain MCP package
+- `fb18f25a5a4748cc0365ca7693213aba5dc10062` — add read-only Project Brain tools
+- `40b92ebe1f379100fdd144f6a90f9b7020f49c15` — add stable MCP Python SDK dependency
+- `6909897e1060a5bf3fe652558fe91b3daf9fccc8` — mount the MCP bridge into the existing FastAPI process
+- `26d26d371f183d0e8efbd602c27f808818084e85` — expose controlled expected MCP lookup errors without leaking unexpected exceptions
+- `1036f1c1d7a3cbab41aed19ac790de7289ce98bb` — share the canonical project continue control service
+- `a49101e2bbc445ba28124056418e06206c3250c4` — keep terminal projects non-resumable
+- `719236a5aea293da7c8dc950675a931cb0984763` — add OAuth introspection resource-server auth
+- `53c0da4d1bf8aafd42ce96a6ec9001c6d7379338` — pin direct HTTP dependency used by token introspection
+- `2baad556deb1f785b6a92a0fd58f85ca935e70b3` — add scoped project and approval controls
+- `77322fc15911a56423cf12ff0be7931c165ce643` — serve the bridge with stateless HTTP auth context
+- `035941c2807ae250009fe4cd8db646b99d41b7f8` — OAuth resource-server regression coverage
+- `9973593adf8762a795989a4278bdad2048561309` — strict Android approval handoff route model
+- `58e9e5725d74a5314d040b08c6fb9bdad2bad015` — route Android handoff intents
+- `044a547a2f6e657ed56e5b0fb31c738133d92671` — navigate handoff to Approval Center without side effects
+- `d285bd51d6adb0357057f50be9d7ce89d8e311f0` — register exact Android approval deep link
+- `afcf6b2da266fae27afdfa6e494dd1d026aeedd7` — strict handoff parser tests
+- `9b91796e2f3b4d22fbe0ed22a5de63331e3a86f5` — expose safe native approval handoff through MCP
+- `999f698f8111c5127629a5726bb98f80572f0dcc` — prove the MCP handoff is navigation-only
+- `7a4d764902f424ec733d610b93f92bde678b762e` — prove the native approval handoff through a real emulator VIEW intent
+- `53363fc718202c60e36abdfd9f5859d3ff0311f6` — end-to-end MCP read → status → control → authoritative re-read verification
+
+Verified semantics:
+
+- read-only MCP surface is exactly `list_projects`, `get_project`, `get_project_status`, `list_project_tasks` and `list_pending_approvals`
+- read responses expose only intended project/status/task data and safe approval preview/hash/reason metadata; raw normalized approval payloads, device bearer tokens, provider API keys and hidden credentials are not returned
+- MCP handlers reuse canonical Project Brain services and do not become an alternate direct database-writing business layer
+- `continue_project` requires `projects:control` and uses the shared project-control service
+- approval decisions require `approvals:decide`, an exact approval ID and exact 64-character payload hash
+- approval decisions call the existing approval lifecycle; they never enqueue or execute the underlying Android action and report `execution_started=false`
+- unauthenticated control operations and missing scopes are rejected
+- remote auth supports an OAuth resource-server boundary using token introspection with active-token, issuer, audience/resource and scope validation; partial auth configuration fails closed and credentials remain environment-only
+- stateless MCP HTTP keeps auth context request-scoped
+- MCP expected validation errors are controlled `ToolError` results while unexpected failures remain sanitized
+- the safe native fallback is exactly `mobilechatgpt://approvals`; no approval ID, decision, payload or credential is embedded in the deep link
+- Android accepts only the approval handoff host, and the parser rejects added path, query, fragment, user info, port, wrong scheme/host and malformed forms
+- opening the deep link only navigates to Approval Center and refreshes state; it does not approve, reject, pair, sync, enqueue, claim or execute a device command
+- emulator verification proves both approvals remain pending and device command claim remains idle immediately after the VIEW handoff
+- real device actions still execute only through the previously verified secure device bridge and safe `DeviceToolRegistry`
+- bridge E2E verifies `list_projects → get_project_status(paused) → continue_project → get_project_status(ready)` and confirms the same authoritative state through the normal HTTP backend
+- release `usesCleartextTraffic=false`, approval single-use/exact-payload semantics, chooser-only `share_text`, no-secret and no-Accessibility invariants remain intact
+
+Verification:
+
+- read-only foundation Backend CI `33714720691`: **SUCCESS**
+- read-only foundation Secret Pattern Guard `33714720675`: **SUCCESS**
+- scoped control/auth Backend CI `33715273109`: **SUCCESS**
+- scoped control/auth Secret Pattern Guard `33715273105`: **SUCCESS**
+- final Backend CI `33715676368`: **SUCCESS** — tests, Python compile and PostgreSQL migration smoke all passed
+- final Secret Pattern Guard `33715676299`: **SUCCESS**
+- Android CI `33715633775`: **SUCCESS** — unit tests, debug APK build and upload passed
+- APK artifact `9878420743`, SHA-256 `86e0f5d8a88870d430deddfbc5d113f1a85e3931d9b87bdea123675b438c3e96`
+- deep-link Android Emulator Runtime QA `33715633785`: **SUCCESS**
+- deep-link runtime evidence artifact `9878511896`, SHA-256 `c0cd13a577cab4736ea597de0c031e75bfd33b0d7821f8f654fc3d12ee90cb17`
+- final combined Android Emulator Runtime QA `33715676302`: **SUCCESS** on source head `53363fc718202c60e36abdfd9f5859d3ff0311f6`
+- final runtime evidence artifact `9878537210`, SHA-256 `7cd0d8e24a4c9685422ff2fc1a7699425d30402b92d4582a7011e5e445c57de1`
+
 Release invariant remains mandatory:
 `usesCleartextTraffic=false`; release backend URLs must use HTTPS.
 
 # CURRENT NEXT CHECKPOINT — DO NOT SKIP
 
-## CHATGPT / MCP BRIDGE
+## RELIABILITY & SECURITY HARDENING
 
-Goal: expose the durable Project Brain to ChatGPT through a narrow authenticated MCP / ChatGPT App bridge so ChatGPT can read project state and request existing validated project-control operations without becoming an alternate database writer, bypassing approval rules, or directly controlling unsafe device behavior.
-
-This checkpoint implements Phase 6 from the master plan:
-
-- MCP server / ChatGPT App
-- project state read tools
-- project control tools
-- status / continue / approve flows
-- approval/status surfaces
-- deep links back to MobileChatGpt when device interaction is required
+Goal: complete Phase 7 by proving the Project Brain, MCP boundary and secure device bridge recover safely from failures/restarts, preserve idempotency and bounded execution, protect credentials/logs with least privilege, and leave a complete audit trail under abuse/risk testing before Beta.
 
 ## REQUIRED EXECUTION ORDER
 
-1. Inventory the existing repository for any MCP/ChatGPT bridge skeleton, reusable backend service boundaries and auth configuration before adding new architecture.
-2. Define the smallest MCP surface around existing validated domain/API operations. Read tools first: list projects, read project/status/tasks and list actionable approvals.
-3. Add project-control tools only through existing domain/API services: continue/resume a project and explicit approval decisions. MCP must not write database tables directly.
-4. Preserve approval authority: MCP/ChatGPT must never auto-approve because a tool was invoked, a project is autonomous, or a device is paired. Any approval action exposed to ChatGPT must map to an explicit user-authorized approval operation and retain exact payload/expiry/single-use semantics.
-5. Do not expose device bearer tokens, API secrets, hidden payload fields, raw credentials or unrestricted backend internals through MCP responses.
-6. Keep actual Android actions on the existing secure device bridge. When device interaction is required, return project/action status and a safe MobileChatGpt handoff/deep-link surface rather than introducing remote UI automation.
-7. Add authentication/authorization appropriate for the bridge boundary and reject unauthenticated control operations. Keep credentials outside source control.
-8. Add deterministic MCP contract tests for tool schemas, project scoping, status/continue behavior, approval state handling, validation errors and forbidden direct/bypass actions.
-9. Add an end-to-end bridge verification that reads a real Project Brain project, obtains status, invokes a permitted control operation, and confirms authoritative backend state through the same domain services.
-10. Keep Backend CI, Android CI where Android source changes, Secret Pattern Guard, approval regression tests, secure device bridge and release HTTPS invariants green.
-11. Record exact implementation commits, tests and integration evidence here before moving to automation/reliability/security.
+1. Inventory remaining gaps against the Phase 7 reliability/security requirements before changing architecture.
+2. Extend deterministic failure-recovery coverage across Project Brain scheduler/agents, MCP controls/auth and the secure device bridge.
+3. Prove resume-after-restart behavior for durable project/task/approval/device-command state and long-running checkpointed work where implemented.
+4. Audit and harden idempotency, concurrency races, lease expiry, heartbeat loss and bounded retry/exhaustion behavior; do not add unbounded retries or duplicate side effects.
+5. Review secrets, redaction and least-privilege boundaries across backend config, MCP auth, Android credential storage, logs/audit data and CI; credentials must remain outside source control and APK plaintext.
+6. Review audit traceability so project controls, approval decisions, tool/device execution, recovery and failures remain attributable to project/task/actor/policy where applicable.
+7. Add abuse/risk regression tests for authorization bypass, approval bypass, malformed/hidden payloads, replay/race attempts, revoked/expired credentials, unsafe deep-link variants and direct-device-control attempts outside the secure bridge.
+8. Verify DB-backed leases/checkpoints, bounded retries, concurrency/token budgets and stale-run recovery continue to satisfy the master-plan reliability requirements.
+9. Keep Backend CI, Android CI when Android changes, Android Emulator Runtime QA where runtime behavior changes, Secret Pattern Guard, release HTTPS/no-cleartext, approval lifecycle and secure-device gates green.
+10. Record exact implementation commits, CI runs, artifacts and hardening evidence here before moving to Beta.
 
 # DO NOT START YET
 
-Until the ChatGPT/MCP bridge passes its verification gates, do not begin:
+Until Reliability & Security hardening passes its verification gates, do not begin:
 
-- broad autonomous external integrations unrelated to the bridge
+- Beta templates or onboarding work
+- broad telemetry/product analytics rollout
+- UX polish unrelated to hardening
+- performance/cost optimization unrelated to a concrete reliability issue
+- broad autonomous external integrations
 - direct recipient selection or autonomous messaging
-- contacts/reminders expansion unless required by a later approved checkpoint
 - generic Accessibility-based autonomous UI control
 - payments or financial actions
-- weakening approvals for convenience
-- storing API keys/tokens in the repository or Android APK
+- weakening approval/auth/security boundaries for convenience
 
 # NEXT ONLY AFTER THIS CHECKPOINT PASSES
 
-`automation / reliability / security hardening → Beta`
+`Beta — real project templates / telemetry / UX refinement / onboarding / performance & cost optimization`
 
 # RULE
 
