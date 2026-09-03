@@ -15,6 +15,7 @@ import am.mobilechatgpt.device.DeviceCommandProcessor
 import am.mobilechatgpt.device.DeviceToolExecutor
 import am.mobilechatgpt.device.DeviceToolRegistry
 import am.mobilechatgpt.domain.model.ApprovalSummary
+import am.mobilechatgpt.domain.model.HandoffTarget
 import am.mobilechatgpt.domain.model.HealthStatus
 import am.mobilechatgpt.domain.model.ProjectStatus
 import am.mobilechatgpt.domain.model.ProjectSummary
@@ -32,7 +33,11 @@ private sealed interface Screen {
 }
 
 @Composable
-fun MobileChatGptApp(appContext: Context) {
+fun MobileChatGptApp(
+    appContext: Context,
+    handoffTarget: HandoffTarget? = null,
+    onHandoffConsumed: () -> Unit = {},
+) {
     val backend = remember { BackendClient() }
     val deviceCredentials = remember { DeviceCredentialStore(appContext) }
     val bridgeBackend = remember { BackendClient(authTokenProvider = deviceCredentials) }
@@ -108,6 +113,18 @@ fun MobileChatGptApp(appContext: Context) {
     }
 
     LaunchedEffect(Unit) { refreshHome() }
+
+    LaunchedEffect(handoffTarget) {
+        when (handoffTarget) {
+            HandoffTarget.APPROVAL_CENTER -> {
+                screen = Screen.ApprovalCenter
+                refreshApprovals()
+                onHandoffConsumed()
+            }
+
+            null -> Unit
+        }
+    }
 
     when (val current = screen) {
         Screen.Home -> HomeScreen(
