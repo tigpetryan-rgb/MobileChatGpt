@@ -182,7 +182,7 @@ class RuntimeVerticalSliceTest {
         shell("input keyevent KEYCODE_BACK")
         returnToApp()
 
-        // Approval Center: seed two pending approvals, then decide both via real Compose UI.
+        // Approval Center: seed two pending approvals, then enter through the real native handoff.
         val approvedUrlPayload = JSONObject().put("url", "https://example.com/approved")
         val openUrlApproval = createApproval(
             projectId = project.id,
@@ -201,23 +201,20 @@ class RuntimeVerticalSliceTest {
             reason = "Runtime Approval Center QA",
         )
 
-        // External intents can either preserve the dashboard activity or recreate it at Home.
-        // Normalize both valid Android lifecycle outcomes before opening Approval Center.
-        if (
-            composeRule.onAllNodesWithText("Back")
-                .fetchSemanticsNodes(atLeastOneRootRequired = false)
-                .isNotEmpty()
-        ) {
-            composeRule.onNodeWithText("Back").performClick()
-        }
-        waitForText("Refresh")
-        composeRule.onNodeWithText("Refresh").performClick()
-        waitForText("Approvals (2)")
-        composeRule.onNodeWithText("Approvals (2)").performClick()
-
+        // Resolve the exported VIEW intent through the manifest. The handoff is navigation-only:
+        // both approvals stay pending and no queued device command is claimed merely by opening it.
+        shell(
+            "am start -W -a android.intent.action.VIEW " +
+                "-d mobilechatgpt://approvals -p am.mobilechatgpt",
+        )
         waitForText("Approval Center")
         waitForText("Share text approval test")
+        waitForText(openUrlApproval.getString("payload_hash"))
         waitForText(shareApproval.getString("payload_hash"))
+        assertEquals("pending", getApprovalStatus(openUrlApproval.getString("id")))
+        assertEquals("pending", getApprovalStatus(shareApproval.getString("id")))
+        assertEquals("idle", processor.claimAndExecute(context).status)
+
         composeRule.onNodeWithText("Reject share_text").performScrollTo().performClick()
         waitForText("Rejected · share_text")
         assertEquals("rejected", getApprovalStatus(shareApproval.getString("id")))
