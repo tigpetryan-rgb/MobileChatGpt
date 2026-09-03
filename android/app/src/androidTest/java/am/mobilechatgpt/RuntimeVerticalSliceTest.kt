@@ -200,7 +200,16 @@ class RuntimeVerticalSliceTest {
             reason = "Runtime Approval Center QA",
         )
 
-        composeRule.onNodeWithText("Back").performClick()
+        // External intents can either preserve the dashboard activity or recreate it at Home.
+        // Normalize both valid Android lifecycle outcomes before opening Approval Center.
+        if (
+            composeRule.onAllNodesWithText("Back")
+                .fetchSemanticsNodes(atLeastOneRootRequired = false)
+                .isNotEmpty()
+        ) {
+            composeRule.onNodeWithText("Back").performClick()
+        }
+        waitForText("Refresh")
         composeRule.onNodeWithText("Refresh").performClick()
         waitForText("Approvals (2)")
         composeRule.onNodeWithText("Approvals (2)").performClick()
