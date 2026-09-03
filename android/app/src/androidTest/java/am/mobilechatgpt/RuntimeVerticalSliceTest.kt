@@ -35,7 +35,7 @@ class RuntimeVerticalSliceTest {
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun safeToolsSecureBridgeAndApprovalCenterVerticalSlice() = runBlocking {
+    fun safeToolsSecureBridgeApprovalAndApprovedActionVerticalSlice() = runBlocking {
         waitForText("Backend ok", substring = true)
         waitForText("Runtime QA Project")
 
@@ -183,11 +183,12 @@ class RuntimeVerticalSliceTest {
         returnToApp()
 
         // Approval Center: seed two pending approvals, then decide both via real Compose UI.
+        val approvedUrlPayload = JSONObject().put("url", "https://example.com/approved")
         val openUrlApproval = createApproval(
             projectId = project.id,
             toolName = "open_url",
             riskClass = 2,
-            payload = JSONObject().put("url", "https://example.com/approved"),
+            payload = approvedUrlPayload,
             preview = "Open URL approval test",
             reason = "Runtime Approval Center QA",
         )
@@ -228,9 +229,45 @@ class RuntimeVerticalSliceTest {
         waitForText("No pending approvals.")
         assertEquals("approved", getApprovalStatus(openUrlApproval.getString("id")))
 
-        // Approval UI changes approval state only. The approved item remains unconsumed.
+        // The approval tap remains decision-only: it does not enqueue or execute the action.
         assertTrue(isApprovalListed(openUrlApproval.getString("id"), "approved"))
         assertTrue(isApprovalListed(shareApproval.getString("id"), "rejected"))
+        assertEquals("idle", processor.claimAndExecute(context).status)
+
+        // A later normal enqueue step consumes the exact approved payload and creates one command.
+        val approvedQueued = enqueueDeviceCommand(
+            registration.deviceId,
+            project.id,
+            "open_url",
+            approvedUrlPayload,
+            "runtime-emulator-approved-open-url-v1",
+            approvalId = openUrlApproval.getString("id"),
+        )
+        assertFalse(approvedQueued.getBoolean("replayed"))
+        assertEquals("consumed", getApprovalStatus(openUrlApproval.getString("id")))
+
+        val approvedBridge = processor.claimAndExecute(context)
+        val approvedCode = approvedBridge.toolResult?.code
+        assertTrue(approvedCode in setOf("url_open_requested", "url_handler_not_found"))
+        val expectedToolCallStatus = if (approvedBridge.toolResult?.success == true) "completed" else "failed"
+        assertEquals(expectedToolCallStatus, approvedBridge.status)
+        assertEquals(expectedToolCallStatus, getToolCallStatus(approvedQueued.getString("tool_call_id")))
+        returnToApp()
+
+        // Exact idempotent replay returns the same command and never consumes or executes twice.
+        val approvedReplay = enqueueDeviceCommand(
+            registration.deviceId,
+            project.id,
+            "open_url",
+            approvedUrlPayload,
+            "runtime-emulator-approved-open-url-v1",
+            approvalId = openUrlApproval.getString("id"),
+        )
+        assertTrue(approvedReplay.getBoolean("replayed"))
+        assertEquals(approvedQueued.getString("id"), approvedReplay.getString("id"))
+        assertEquals(approvedQueued.getString("tool_call_id"), approvedReplay.getString("tool_call_id"))
+        assertEquals("consumed", getApprovalStatus(openUrlApproval.getString("id")))
+        assertEquals("idle", processor.claimAndExecute(context).status)
 
         credentialStore.clear()
     }
@@ -285,6 +322,7 @@ class RuntimeVerticalSliceTest {
         toolName: String,
         payload: JSONObject,
         idempotencyKey: String,
+        approvalId: String? = null,
     ): JSONObject = requestJson(
         "POST",
         "devices/$deviceId/commands",
@@ -294,6 +332,7 @@ class RuntimeVerticalSliceTest {
             .put("payload", payload)
             .put("idempotency_key", idempotencyKey)
             .put("external_side_effect", false)
+            .apply { approvalId?.let { put("approval_id", it) } }
             .toString(),
     )
 
