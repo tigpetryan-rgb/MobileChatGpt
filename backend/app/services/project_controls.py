@@ -22,8 +22,8 @@ def continue_project_control(
     MCP callers can preserve atomicity with their surrounding operation.
     """
 
-    if project.status == ProjectStatus.COMPLETED.value:
-        raise ProjectControlError("Completed projects cannot be continued")
+    if project.status in {ProjectStatus.COMPLETED.value, ProjectStatus.CANCELLED.value}:
+        raise ProjectControlError("Terminal projects cannot be continued")
 
     if project.status == ProjectStatus.PAUSED.value:
         project.status = ProjectStatus.ACTIVE.value
