@@ -79,6 +79,8 @@ class ApprovalCreate(BaseModel):
 
 
 class ApprovalConsume(BaseModel):
+    project_id: str
+    task_id: str | None = None
     tool_name: str
     payload: dict
 
