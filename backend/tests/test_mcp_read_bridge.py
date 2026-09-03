@@ -33,7 +33,7 @@ def _seed_project(client):
     return project, task
 
 
-def test_mcp_lists_only_the_initial_read_tools_with_safe_annotations(client):
+def test_mcp_tool_catalog_has_safe_read_and_control_annotations(client):
     _seed_project(client)
 
     async def exercise():
@@ -46,14 +46,39 @@ def test_mcp_lists_only_the_initial_read_tools_with_safe_annotations(client):
                 "get_project_status",
                 "list_project_tasks",
                 "list_pending_approvals",
+                "continue_project",
+                "decide_approval",
             }
-            for tool in by_name.values():
+            read_names = {
+                "list_projects",
+                "get_project",
+                "get_project_status",
+                "list_project_tasks",
+                "list_pending_approvals",
+            }
+            for name in read_names:
+                tool = by_name[name]
                 assert tool.annotations is not None
                 assert tool.annotations.read_only_hint is True
                 assert tool.annotations.destructive_hint is False
                 assert tool.annotations.idempotent_hint is True
                 assert tool.annotations.open_world_hint is False
                 assert tool.output_schema is not None
+
+            continue_tool = by_name["continue_project"]
+            assert continue_tool.annotations is not None
+            assert continue_tool.annotations.read_only_hint is False
+            assert continue_tool.annotations.destructive_hint is False
+            assert continue_tool.annotations.idempotent_hint is False
+            assert continue_tool.annotations.open_world_hint is False
+
+            approval_tool = by_name["decide_approval"]
+            assert approval_tool.annotations is not None
+            assert approval_tool.annotations.read_only_hint is False
+            assert approval_tool.annotations.destructive_hint is True
+            assert approval_tool.annotations.idempotent_hint is False
+            assert approval_tool.annotations.open_world_hint is False
+            assert approval_tool.output_schema is not None
 
     _run(exercise())
 
