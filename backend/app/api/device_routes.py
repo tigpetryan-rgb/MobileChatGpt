@@ -125,7 +125,7 @@ def enqueue(device_id: str, payload: DeviceCommandEnqueue, db: Session = Depends
         )
         db.commit()
         return {**_command_payload(command), "replayed": replayed}
-    except DeviceBridgeError as exc:
+    except (DeviceBridgeError, ValueError) as exc:
         db.rollback()
         raise HTTPException(409, str(exc)) from exc
 
