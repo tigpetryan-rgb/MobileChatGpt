@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -10,10 +10,19 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.models import Approval, Project, Task
 from app.db.session import SessionLocal
 from app.domain.enums import ApprovalStatus
-from app.services.approvals import is_expired
+from app.mcp.auth import (
+    MCP_APPROVAL_SCOPE,
+    MCP_CONTROL_SCOPE,
+    actor_from_token,
+    build_mcp_auth,
+    require_scope,
+)
+from app.services.approvals import ApprovalError, approve_approval, is_expired, reject_approval
+from app.services.project_controls import ProjectControlError, continue_project_control
 from app.services.status import project_status_snapshot
 
 
@@ -21,6 +30,20 @@ READ_ONLY = ToolAnnotations(
     read_only_hint=True,
     destructive_hint=False,
     idempotent_hint=True,
+    open_world_hint=False,
+)
+
+PROJECT_CONTROL = ToolAnnotations(
+    read_only_hint=False,
+    destructive_hint=False,
+    idempotent_hint=False,
+    open_world_hint=False,
+)
+
+APPROVAL_DECISION = ToolAnnotations(
+    read_only_hint=False,
+    destructive_hint=True,
+    idempotent_hint=False,
     open_world_hint=False,
 )
 
@@ -105,6 +128,24 @@ class ApprovalListResult(BaseModel):
     approvals: list[ApprovalSummary]
 
 
+class ContinueProjectResult(BaseModel):
+    project_id: str
+    project_status: str
+    promoted_ready: int
+    blocked: int
+    status: ProjectStatusResult
+
+
+class ApprovalDecisionResult(BaseModel):
+    id: str
+    project_id: str
+    task_id: str | None = None
+    tool_name: str
+    status: str
+    payload_hash: str
+    execution_started: bool = False
+
+
 def _project_or_error(db: Session, project_id: str) -> Project:
     project = db.get(Project, project_id)
     if not project:
@@ -122,7 +163,15 @@ def _project_summary(project: Project) -> ProjectSummary:
 
 
 def build_mcp_server() -> MCPServer:
-    mcp = MCPServer("MobileChatGpt Project Brain")
+    auth_bundle = build_mcp_auth(settings)
+    if auth_bundle is None:
+        mcp = MCPServer("MobileChatGpt Project Brain")
+    else:
+        mcp = MCPServer(
+            "MobileChatGpt Project Brain",
+            token_verifier=auth_bundle.token_verifier,
+            auth=auth_bundle.auth_settings,
+        )
 
     @mcp.tool(
         title="List projects",
@@ -239,6 +288,79 @@ def build_mcp_server() -> MCPServer:
                     for approval in actionable
                 ]
             )
+
+    @mcp.tool(
+        title="Continue project",
+        description=(
+            "Use this only when the user has asked to resume or continue this project. "
+            "This changes Project Brain state through the canonical control service; it does not execute a device action."
+        ),
+        annotations=PROJECT_CONTROL,
+    )
+    def continue_project(project_id: str) -> ContinueProjectResult:
+        token = require_scope(MCP_CONTROL_SCOPE)
+        with SessionLocal() as db:
+            project = _project_or_error(db, project_id)
+            try:
+                control = continue_project_control(
+                    db,
+                    project=project,
+                    actor=actor_from_token(token),
+                )
+                status = ProjectStatusResult.model_validate(project_status_snapshot(db, project))
+                db.commit()
+                return ContinueProjectResult(**control, status=status)
+            except ProjectControlError as exc:
+                db.rollback()
+                raise ToolError(str(exc)) from exc
+
+    @mcp.tool(
+        title="Decide approval",
+        description=(
+            "Use this only as a direct approval decision after the user explicitly confirms approve or reject for the displayed "
+            "approval and exact payload hash. Never infer consent from autonomy, navigation, pairing, or a previous request. "
+            "This records the decision only and never enqueues or executes the underlying device action."
+        ),
+        annotations=APPROVAL_DECISION,
+    )
+    def decide_approval(
+        approval_id: str,
+        payload_hash: Annotated[
+            str,
+            Field(
+                min_length=64,
+                max_length=64,
+                description="Exact 64-character payload hash shown for the approval the user confirmed.",
+            ),
+        ],
+        decision: Literal["approve", "reject"],
+    ) -> ApprovalDecisionResult:
+        token = require_scope(MCP_APPROVAL_SCOPE)
+        with SessionLocal() as db:
+            approval = db.get(Approval, approval_id)
+            if not approval:
+                raise ToolError("Approval not found")
+            if approval.payload_hash != payload_hash:
+                raise ToolError("Approval payload hash does not match")
+            try:
+                if decision == "approve":
+                    approve_approval(db, approval, actor=actor_from_token(token))
+                else:
+                    reject_approval(db, approval, actor=actor_from_token(token))
+                db.commit()
+                return ApprovalDecisionResult(
+                    id=approval.id,
+                    project_id=approval.project_id,
+                    task_id=approval.task_id,
+                    tool_name=approval.tool_name,
+                    status=approval.status,
+                    payload_hash=approval.payload_hash,
+                    execution_started=False,
+                )
+            except ApprovalError as exc:
+                # Preserve an EXPIRED transition performed by the canonical approval service.
+                db.commit()
+                raise ToolError(str(exc)) from exc
 
     return mcp
 
