@@ -8,6 +8,11 @@ class Settings(BaseSettings):
     openai_manager_model: str = "gpt-5.6-terra"
     openai_worker_model: str = "gpt-5.6-terra"
     openai_trace_include_sensitive_data: bool = False
+    mcp_auth_issuer_url: str | None = None
+    mcp_resource_server_url: str | None = None
+    mcp_token_introspection_url: str | None = None
+    mcp_introspection_client_id: str | None = None
+    mcp_introspection_client_secret: str | None = None
     model_config = SettingsConfigDict(env_prefix="", case_sensitive=False)
 
 
