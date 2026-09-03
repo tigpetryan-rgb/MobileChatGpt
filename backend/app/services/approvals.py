@@ -153,10 +153,10 @@ def consume_approval(
     db: Session,
     *,
     approval_id: str,
-    project_id: str,
-    task_id: str | None,
     tool_name: str,
     payload: dict,
+    project_id: str | None = None,
+    task_id: str | None = None,
     actor: str = "tool-runtime",
 ) -> Approval:
     stmt = select(Approval).where(Approval.id == approval_id)
@@ -169,10 +169,11 @@ def consume_approval(
         raise ApprovalError("Approval has expired")
     if approval.status != ApprovalStatus.APPROVED.value:
         raise ApprovalError("Approval is not approved")
-    if approval.project_id != project_id:
-        raise ApprovalError("Approval project does not match")
-    if approval.task_id != task_id:
-        raise ApprovalError("Approval task does not match")
+    if project_id is not None:
+        if approval.project_id != project_id:
+            raise ApprovalError("Approval project does not match")
+        if approval.task_id != task_id:
+            raise ApprovalError("Approval task does not match")
     if approval.tool_name != tool_name:
         raise ApprovalError("Approval tool does not match")
     if approval.payload_hash != payload_hash(payload):
